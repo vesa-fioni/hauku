@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/png" href="logo.png">
+<title>Hauku</title>
+<style>
+  body {
+    font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px;
+    line-height: 1.5; color: #222;
+  }
+  a.button {
+    display: block; text-align: center; padding: 16px; margin: 12px 0;
+    border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px;
+  }
+  .dog { background: #f97316; color: white; }
+  .hunter { background: #2563eb; color: white; }
+  code { background: #f3f4f6; padding: 2px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <img src="logo.png" alt="Hauku" style="width:100%;max-width:400px;display:block;margin:0 auto 8px;">
+
+  <p>
+    Ryhmäpohjainen sijainninjako koiralle ja metsästäjille. Syötä sama ryhmäkoodi
+    kaikilla laitteilla, niin näette toistenne sijainnin ja jäljen kartalla reaaliajassa.
+  </p>
+  <p>
+    <strong>Huomio:</strong> tarvitset oman ilmaisen Firebase-projektin
+    (Firestore + Anonymous Auth). Katso <a href="https://github.com/YOUR_USERNAME/hauku#readme">README:sta</a>
+    ohjeet. Kukin käyttäjä syöttää omat Firebase-avaimensa ensimmäisellä latauksella -
+    ne tallennetaan vain omaan selaimeen, eivät mihinkään palvelimelle.
+  </p>
+
+  <a class="button dog" href="dog.html">🐕 Koiramoodi</a>
+  <a class="button hunter" href="hunter.html">🎯 Metsästäjämoodi</a>
+
+  <p style="font-size:13px;color:#666;margin-top:32px;">
+    Tämä on harrasteprojekti kokeiluversiona. Pääsynhallinta perustuu ryhmäkoodiin
+    (jaettu salasana), ei käyttäjätileihin - älä käytä arkaluontoiseen tietoon.
+  </p>
+</body>
+</html>

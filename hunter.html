@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="icon" type="image/png" href="logo.png">
+<title>Hauku - Metsästäjä</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  html, body, #map { height: 100%; margin: 0; padding: 0; }
+  #status {
+    position: absolute; top: 8px; left: 8px; z-index: 1000;
+    background: rgba(255,255,255,0.9); padding: 6px 10px; border-radius: 6px;
+    font-family: sans-serif; font-size: 13px; max-width: 80%;
+  }
+  #topbar {
+    position: absolute; top: 8px; right: 8px; z-index: 1000;
+    background: #2563eb; color: white; padding: 6px 12px; border-radius: 6px;
+    font-family: sans-serif; font-size: 13px; font-weight: bold;
+    display: flex; align-items: center; gap: 6px;
+  }
+  #topbar img { height: 20px; }
+</style>
+</head>
+<body>
+<div id="topbar"><img src="logo.png" alt="Hauku"> Metsästäjämoodi</div>
+<div id="status">Ladataan...</div>
+<div id="map"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+<script>window.PACK_ROLE = "hunter";</script>
+<script src="shared.js"></script>
+</body>
+</html>

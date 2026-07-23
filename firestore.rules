@@ -1,0 +1,43 @@
+rules_version = '2';
+
+// Pääsymalli:
+// - Ryhmäkoodi ON dokumentin ID (esim. "HIRVI24"). Koodin tietäminen = pääsy ryhmään.
+// - Kirjautuminen vaaditaan (anonyymi kirjautuminen riittää) jotta request.auth.uid on olemassa
+//   ja jokainen kirjoittaa vain omaan member-dokumenttiinsa (ei voi peukaloida muiden sijaintia).
+// - Kuka tahansa kirjautunut käyttäjä, joka tietää koodin, näkee koko ryhmän sijainnit.
+//   Tämä on tarkoituksella "jaettu salasana" -tyylinen suojaus, ei täysi käyttöoikeushallinta.
+//   Riittää harrastekäyttöön; EI sovi arkaluteisiin/kaupallisiin tarpeisiin sellaisenaan.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /groups/{groupCode} {
+
+      // Ryhmän "kansilehti" (voi sisältää esim. luontiajan) - kuka tahansa kirjautunut voi lukea/luoda
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+
+      match /members/{memberId} {
+
+        // Kuka tahansa kirjautunut, joka tietää ryhmäkoodin (eli osaa kysyä tätä polkua), saa lukea
+        // kaikkien jäsenten sijainnit.
+        allow read: if request.auth != null;
+
+        // Kirjoittaa saa VAIN oman dokumenttinsa - memberId on aina kirjautuneen käyttäjän uid.
+        allow create, update: if request.auth != null
+                               && request.auth.uid == memberId
+                               && request.resource.data.keys().hasAll(['lat','lng','updatedAt','role','name'])
+                               && request.resource.data.lat is number
+                               && request.resource.data.lng is number;
+
+        allow delete: if request.auth != null && request.auth.uid == memberId;
+
+        // Historiapisteet jälkeä varten: groups/{code}/members/{uid}/track/{autoId}
+        match /track/{pointId} {
+          allow read: if request.auth != null;
+          allow create: if request.auth != null && request.auth.uid == memberId;
+        }
+      }
+    }
+  }
+}
