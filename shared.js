@@ -186,6 +186,7 @@ function showSettingsOverlay(onSave) {
   const overlay = document.createElement("div");
   overlay.id = "settingsOverlay";
   overlay.className = "overlay";
+  overlay.style.display = "flex";
   overlay.innerHTML = renderConfigForm(loadConfig(), {});
   document.body.appendChild(overlay);
   attachConfigFormHandlers(overlay, (cfg) => {
