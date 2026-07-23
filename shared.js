@@ -16,7 +16,47 @@ function saveConfig(cfg) {
   localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
 }
 
-function showConfigForm(existing, onSave) {
+// Lukee Firebase-avaimet ja ryhmäkoodin URL-parametreista, jos ne on annettu
+// esim. dog.html?group=HIRVI24&apiKey=...&authDomain=...&projectId=...&appId=...
+// Näin jaettu linkki voi sisältää kaiken paitsi käyttäjän oman nimen.
+function getUrlConfig() {
+  const p = new URLSearchParams(window.location.search);
+  const result = {};
+
+  const group = p.get("group");
+  if (group) result.groupCode = group;
+
+  const fb = {};
+  ["apiKey", "authDomain", "projectId", "appId"].forEach((key) => {
+    const val = p.get(key);
+    if (val) fb[key] = val;
+  });
+  if (Object.keys(fb).length > 0) result.firebase = fb;
+
+  return result;
+}
+
+function buildShareLink(cfg) {
+  const url = new URL(window.location.href);
+  url.search = ""; // siivoa vanhat parametrit
+  if (cfg.groupCode) url.searchParams.set("group", cfg.groupCode);
+  if (cfg.firebase) {
+    Object.entries(cfg.firebase).forEach(([k, v]) => {
+      if (v) url.searchParams.set(k, v);
+    });
+  }
+  return url.toString();
+}
+
+function showConfigForm(existing, onSave, urlCfg) {
+  urlCfg = urlCfg || {};
+
+  const groupFromUrl = !!urlCfg.groupCode;
+  const firebaseFromUrl = !!urlCfg.firebase;
+
+  const groupValue = existing?.groupCode || urlCfg.groupCode || "";
+  const fbValue = (key) => existing?.firebase?.[key] || urlCfg.firebase?.[key] || "";
+
   const overlay = document.createElement("div");
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;" +
     "display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto;";
@@ -24,33 +64,53 @@ function showConfigForm(existing, onSave) {
   const box = document.createElement("div");
   box.style.cssText = "background:white;padding:20px;border-radius:10px;max-width:420px;width:100%;font-family:sans-serif;";
 
+  // Ryhmäkoodi-kenttä: jos se tuli linkistä, näytetään lukittuna tietona eikä muokattavana
+  const groupField = groupFromUrl
+    ? `<p style="font-size:13px;margin-bottom:8px;">Ryhmä: <strong>${groupValue}</strong> (linkistä)</p>
+       <input type="hidden" id="cfg_group" value="${groupValue}">`
+    : `<label style="font-size:12px;">Ryhmäkoodi</label>
+       <input id="cfg_group" style="width:100%;margin-bottom:8px;padding:6px;" value="${groupValue}">`;
+
+  // Firebase-kentät: jos ne tulivat linkistä, piilotetaan kokonaan lomakkeesta
+  const firebaseFields = firebaseFromUrl
+    ? `<p style="font-size:12px;color:#2563eb;margin-bottom:8px;">Firebase-yhteys jo asetettu linkin kautta ✓</p>
+       <input type="hidden" id="cfg_apiKey" value="${fbValue("apiKey")}">
+       <input type="hidden" id="cfg_authDomain" value="${fbValue("authDomain")}">
+       <input type="hidden" id="cfg_projectId" value="${fbValue("projectId")}">
+       <input type="hidden" id="cfg_appId" value="${fbValue("appId")}">`
+    : `<label style="font-size:12px;">Firebase apiKey</label>
+       <input id="cfg_apiKey" style="width:100%;margin-bottom:8px;padding:6px;" value="${fbValue("apiKey")}">
+
+       <label style="font-size:12px;">Firebase authDomain</label>
+       <input id="cfg_authDomain" style="width:100%;margin-bottom:8px;padding:6px;" value="${fbValue("authDomain")}">
+
+       <label style="font-size:12px;">Firebase projectId</label>
+       <input id="cfg_projectId" style="width:100%;margin-bottom:8px;padding:6px;" value="${fbValue("projectId")}">
+
+       <label style="font-size:12px;">Firebase appId</label>
+       <input id="cfg_appId" style="width:100%;margin-bottom:12px;padding:6px;" value="${fbValue("appId")}">`;
+
   box.innerHTML = `
     <h2 style="margin-top:0;font-size:18px;">Asetukset</h2>
     <p style="font-size:13px;color:#555;">
       Nämä tallennetaan vain TÄHÄN selaimeen (localStorage), ei minnekään palvelimelle.
-      Käytä omaa Firebase-projektiasi (Firestore + Anonymous Auth käytössä).
     </p>
-    <label style="font-size:12px;">Ryhmäkoodi</label>
-    <input id="cfg_group" style="width:100%;margin-bottom:8px;padding:6px;" value="${existing?.groupCode || ""}">
+
+    ${groupField}
 
     <label style="font-size:12px;">Nimi (esim. Rekku tai Matti)</label>
     <input id="cfg_name" style="width:100%;margin-bottom:8px;padding:6px;" value="${existing?.name || ""}">
 
-    <label style="font-size:12px;">Firebase apiKey</label>
-    <input id="cfg_apiKey" style="width:100%;margin-bottom:8px;padding:6px;" value="${existing?.firebase?.apiKey || ""}">
-
-    <label style="font-size:12px;">Firebase authDomain</label>
-    <input id="cfg_authDomain" style="width:100%;margin-bottom:8px;padding:6px;" value="${existing?.firebase?.authDomain || ""}">
-
-    <label style="font-size:12px;">Firebase projectId</label>
-    <input id="cfg_projectId" style="width:100%;margin-bottom:8px;padding:6px;" value="${existing?.firebase?.projectId || ""}">
-
-    <label style="font-size:12px;">Firebase appId</label>
-    <input id="cfg_appId" style="width:100%;margin-bottom:12px;padding:6px;" value="${existing?.firebase?.appId || ""}">
+    ${firebaseFields}
 
     <button id="cfg_save" style="width:100%;padding:10px;background:#2563eb;color:white;border:none;border-radius:6px;font-size:15px;">
       Tallenna ja aloita
     </button>
+
+    <button id="cfg_share" style="width:100%;padding:10px;margin-top:8px;background:#f3f4f6;color:#222;border:1px solid #ccc;border-radius:6px;font-size:13px;">
+      Kopioi jakolinkki
+    </button>
+    <p id="cfg_share_status" style="font-size:12px;color:#16a34a;text-align:center;margin:6px 0 0;"></p>
   `;
 
   overlay.appendChild(box);
@@ -74,6 +134,34 @@ function showConfigForm(existing, onSave) {
     saveConfig(cfg);
     document.body.removeChild(overlay);
     onSave(cfg);
+  });
+
+  box.querySelector("#cfg_share").addEventListener("click", () => {
+    const cfg = {
+      groupCode: box.querySelector("#cfg_group").value.trim(),
+      firebase: {
+        apiKey: box.querySelector("#cfg_apiKey").value.trim(),
+        authDomain: box.querySelector("#cfg_authDomain").value.trim(),
+        projectId: box.querySelector("#cfg_projectId").value.trim(),
+        appId: box.querySelector("#cfg_appId").value.trim(),
+      }
+    };
+    if (!cfg.groupCode || !cfg.firebase.apiKey) {
+      alert("Täytä ryhmäkoodi ja Firebase-tiedot ennen linkin jakamista.");
+      return;
+    }
+    const link = buildShareLink(cfg);
+    const statusEl = box.querySelector("#cfg_share_status");
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(() => {
+        statusEl.textContent = "Linkki kopioitu leikepöydälle!";
+      }).catch(() => {
+        statusEl.textContent = link; // fallback: näytä linkki tekstinä
+      });
+    } else {
+      statusEl.textContent = link;
+    }
   });
 }
 
@@ -215,19 +303,35 @@ function startListeningToGroup(db, cfg) {
 function boot() {
   initMap();
 
+  const urlCfg = getUrlConfig();
   const existing = loadConfig();
+
+  // Yhdistä: olemassa oleva tallennettu config + linkistä tulleet oletukset.
+  // Tallennettua configia ei ylikirjoiteta linkillä, jos käyttäjä on jo asettanut
+  // oman Firebase-projektinsa aiemmin (esim. projektin omistaja itse).
+  const merged = existing ? { ...existing } : {};
+  if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
+  if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
+
+  const hasFirebase = merged.firebase && merged.firebase.apiKey && merged.firebase.projectId;
+  const hasGroup = !!merged.groupCode;
+  const hasName = !!merged.name;
 
   addSettingsButton(() => {
     showConfigForm(loadConfig(), (cfg) => {
       if (watchId) navigator.geolocation.clearWatch(watchId);
       startPackTracker(cfg);
-    });
+    }, urlCfg);
   });
 
-  if (existing) {
-    startPackTracker(existing);
+  if (hasFirebase && hasGroup && hasName) {
+    saveConfig(merged);
+    startPackTracker(merged);
   } else {
-    showConfigForm(null, startPackTracker);
+    showConfigForm(merged, (cfg) => {
+      saveConfig(cfg);
+      startPackTracker(cfg);
+    }, urlCfg);
   }
 }
 
