@@ -272,6 +272,16 @@ let currentDb = null, currentAuth = null, currentCfg = null;
 let isSending = false;
 let autoStopTimerId = null;
 
+const PAUSE_KEY = "hauku_paused_v1";
+
+function isManuallyPaused() {
+  return localStorage.getItem(PAUSE_KEY) === "true";
+}
+
+function setManuallyPaused(paused) {
+  localStorage.setItem(PAUSE_KEY, paused ? "true" : "false");
+}
+
 function setStatus(text) {
   const el = document.getElementById("statusText");
   if (el) el.textContent = text;
@@ -288,6 +298,7 @@ function togglePauseResume() {
     if (autoStopTimerId !== null) { clearTimeout(autoStopTimerId); autoStopTimerId = null; }
     watchId = null;
     isSending = false;
+    setManuallyPaused(true);
     setStatus("Lähetys pysäytetty");
     setPauseButtonLabel(false);
   } else {
@@ -295,6 +306,7 @@ function togglePauseResume() {
       setStatus("Odota hetki, yhteys ei ole vielä valmis...");
       return;
     }
+    setManuallyPaused(false);
     startSendingLocation(currentDb, currentAuth, currentCfg);
     setPauseButtonLabel(true);
   }
@@ -329,9 +341,16 @@ function startPackTracker(cfg) {
 
   auth.signInAnonymously().then(() => {
     setStatus("Yhdistetty ryhmään: " + cfg.groupCode);
-    startSendingLocation(db, auth, cfg);
-    setPauseButtonLabel(true);
     startListeningToGroup(db, cfg);
+
+    if (isManuallyPaused()) {
+      isSending = false;
+      setStatus("Lähetys pysäytetty");
+      setPauseButtonLabel(false);
+    } else {
+      startSendingLocation(db, auth, cfg);
+      setPauseButtonLabel(true);
+    }
   }).catch(err => {
     setStatus("Kirjautumisvirhe: " + err.message);
   });
@@ -363,6 +382,7 @@ function startSendingLocation(db, auth, cfg) {
       watchId = null;
       isSending = false;
       autoStopTimerId = null;
+      setManuallyPaused(true);
       setStatus("Lähetys pysäytetty automaattisesti (" + autoStopMinutes + " min)");
       setPauseButtonLabel(false);
     }, autoStopMinutes * 60 * 1000);
@@ -533,7 +553,7 @@ function startListeningToGroup(db, cfg) {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v21";
+const APP_VERSION = "v22";
 
 function boot() {
   const versionEl = document.getElementById("appVersion");
