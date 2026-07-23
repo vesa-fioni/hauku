@@ -345,8 +345,10 @@ function setMapStyle(style) {
 
 function iconFor(role, alertActive) {
   const SIZE = 46;
-  const color = role === "dog" ? "#f97316" : "#1b4332";
-  const emoji = role === "dog" ? "🐕" : "🧍";
+  // Omat brändi-ikonit (koira/ihminen) - väritetty roolin mukaisesti
+  // (koira=oranssi, ihminen=vihreä, ks. whitepaper kohta 12).
+  // Cache-bustataan samaan tapaan kuin muutkin kuva-assetit (logo.png?v=N).
+  const src = role === "dog" ? "icon-dog.png?v=1" : "icon-human.png?v=1";
   const ring = alertActive ? `<div class="alert-ring"></div>` : "";
   const badge = alertActive
     ? `<div class="alert-badge" title="Haukkuu">🔊</div>`
@@ -356,10 +358,11 @@ function iconFor(role, alertActive) {
     html: `
       <div style="position:relative;width:${SIZE}px;height:${SIZE}px;">
         ${ring}
-        <div style="background:${color};width:${SIZE}px;height:${SIZE}px;border-radius:50%;
+        <div style="background:white;width:${SIZE}px;height:${SIZE}px;border-radius:50%;
                     border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.5);
-                    display:flex;align-items:center;justify-content:center;
-                    font-size:26px;line-height:1;">${emoji}</div>
+                    display:flex;align-items:center;justify-content:center;overflow:hidden;">
+          <img src="${src}" alt="" style="width:82%;height:82%;object-fit:contain;">
+        </div>
         ${badge}
       </div>`,
     iconSize: [SIZE, SIZE],
@@ -861,7 +864,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v32";
+const APP_VERSION = "v33";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
