@@ -260,9 +260,39 @@ function iconFor(role) {
   });
 }
 
+let currentDb = null, currentAuth = null, currentCfg = null;
+let isSending = false;
+
 function setStatus(text) {
-  const el = document.getElementById("status");
+  const el = document.getElementById("statusText");
   if (el) el.textContent = text;
+}
+
+function setPauseButtonLabel(sending) {
+  const btn = document.getElementById("pauseBtn");
+  if (btn) btn.textContent = sending ? "Pysäytä" : "Jatka";
+}
+
+function togglePauseResume() {
+  if (isSending) {
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    isSending = false;
+    setStatus("Lähetys pysäytetty");
+    setPauseButtonLabel(false);
+  } else {
+    if (!currentDb || !currentAuth || !currentCfg) {
+      setStatus("Odota hetki, yhteys ei ole vielä valmis...");
+      return;
+    }
+    startSendingLocation(currentDb, currentAuth, currentCfg);
+    setPauseButtonLabel(true);
+  }
+}
+
+function addPauseButton() {
+  const btn = document.getElementById("pauseBtn");
+  if (btn) btn.addEventListener("click", togglePauseResume);
 }
 
 function setTopbar(role, groupCode) {
@@ -281,11 +311,16 @@ function startPackTracker(cfg) {
   const auth = firebase.auth();
   const db = firebase.firestore();
 
+  currentAuth = auth;
+  currentDb = db;
+  currentCfg = cfg;
+
   setStatus("Kirjaudutaan sisään...");
 
   auth.signInAnonymously().then(() => {
     setStatus("Yhdistetty ryhmään: " + cfg.groupCode);
     startSendingLocation(db, auth, cfg);
+    setPauseButtonLabel(true);
     startListeningToGroup(db, cfg);
   }).catch(err => {
     setStatus("Kirjautumisvirhe: " + err.message);
@@ -298,6 +333,7 @@ function startSendingLocation(db, auth, cfg) {
     return;
   }
   if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  isSending = true;
 
   watchId = navigator.geolocation.watchPosition((pos) => {
     const uid = auth.currentUser?.uid;
@@ -408,6 +444,7 @@ function boot() {
   addSettingsButton(() => {
     showSettingsOverlay((cfg) => startPackTracker(cfg));
   });
+  addPauseButton();
 
   if (hasFirebase && hasGroup && hasName && hasRole) {
     saveConfig(merged);
