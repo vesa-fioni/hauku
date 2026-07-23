@@ -345,19 +345,25 @@ function startSendingLocation(db, auth, cfg) {
     const memberRef = db.collection("groups").doc(cfg.groupCode)
       .collection("members").doc(uid);
 
+    // expiresAt: Firestoren TTL-käytäntö poistaa dokumentin automaattisesti tämän ajan jälkeen.
+    // 24h riittää yhdelle metsästyspäivälle - kasvata tarvittaessa (esim. useamman päivän reissu).
+    const expiresAt = firebase.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000);
+
     memberRef.set({
       lat, lng,
       accuracy: pos.coords.accuracy,
       role: cfg.role,
       name: cfg.name,
-      updatedAt: firebase.firestore.Timestamp.now()
+      updatedAt: firebase.firestore.Timestamp.now(),
+      expiresAt
     }, { merge: true });
 
     // Jälki (track) tallennetaan vain koiramoodissa - metsästäjän reittiä ei ole tarpeen seurata
     if (cfg.role === "dog") {
       memberRef.collection("track").add({
         lat, lng,
-        timestamp: firebase.firestore.Timestamp.now()
+        timestamp: firebase.firestore.Timestamp.now(),
+        expiresAt
       });
     }
 
