@@ -168,6 +168,24 @@
     cursor: pointer;
   }
 
+  #listenBtn {
+    flex-shrink: 0;
+    background: var(--orange); color: white; border: none;
+    padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 700;
+    cursor: pointer;
+  }
+
+  /* Haukkuhälytyksen visuaalinen rengas kartan merkin ympärillä */
+  .alert-ring {
+    position: absolute; top: -8px; left: -8px; width: 32px; height: 32px;
+    border-radius: 50%; border: 3px solid #ef4444;
+    animation: alertPulse 1s ease-out infinite;
+  }
+  @keyframes alertPulse {
+    0% { transform: scale(0.6); opacity: 1; }
+    100% { transform: scale(1.7); opacity: 0; }
+  }
+
   .marker-label {
     background: rgba(255,255,255,0.95);
     border: none;
@@ -203,6 +221,7 @@
       <div id="status">
         <span id="statusText">Ladataan...</span>
         <button id="pauseBtn">Pysäytä</button>
+        <button id="listenBtn" style="display:none;">Kuuntele ääntä</button>
       </div>
       <div id="map"></div>
     </div>
@@ -212,6 +231,6 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="shared.js?v=28"></script>
+  <script src="shared.js?v=29"></script>
 </body>
 </html>

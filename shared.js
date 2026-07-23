@@ -140,6 +140,7 @@ function renderConfigForm(existing, urlCfg) {
           </label>
         </div>
         <p class="hint">Koira: sijainti ja kuljettu reitti näkyvät kartalla kaikille. Ihminen: vain nykyinen sijainti näkyy, reittiä ei tallenneta.</p>
+        <p class="hint">Koira-roolissa voi lisäksi ottaa käyttöön äänenkuuntelun (haukkuhälytys) erillisellä kytkimellä kartalla - pyytää tällöin erikseen mikrofoniluvan.</p>
 
         <label>Karttatyyli</label>
         <div class="role-toggle">
@@ -332,11 +333,12 @@ function setMapStyle(style) {
   tileLayer = L.tileLayer(conf.url, conf.options).addTo(map);
 }
 
-function iconFor(role) {
+function iconFor(role, alertActive) {
   const color = role === "dog" ? "#f97316" : "#1b4332";
+  const ring = alertActive ? `<div class="alert-ring"></div>` : "";
   return L.divIcon({
     className: "",
-    html: `<div style="background:${color};width:16px;height:16px;border-radius:50%;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.5);"></div>`,
+    html: `<div style="position:relative;width:16px;height:16px;">${ring}<div style="background:${color};width:16px;height:16px;border-radius:50%;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.5);"></div></div>`,
     iconSize: [16, 16]
   });
 }
@@ -402,6 +404,12 @@ function startPackTracker(cfg) {
   initMap(cfg.mapStyle);
   setTopbar(cfg.role, cfg.groupName || cfg.groupCode);
 
+  // Haukkuhälytyksen kytkin näkyy vain koiramoodissa (oma erillinen kytkin,
+  // ei automaattisesti päällä pelkän roolin perusteella).
+  const listenBtn = document.getElementById("listenBtn");
+  if (listenBtn) listenBtn.style.display = cfg.role === "dog" ? "inline-block" : "none";
+  if (cfg.role !== "dog" && isListening) stopSoundDetection();
+
   firebase.initializeApp(cfg.firebase);
   const auth = firebase.auth();
   const db = firebase.firestore();
@@ -423,6 +431,12 @@ function startPackTracker(cfg) {
     } else {
       startSendingLocation(db, auth, cfg);
       setPauseButtonLabel(true);
+    }
+
+    // Jatketaan äänenkuuntelua automaattisesti jos se oli päällä ennen
+    // sivun uudelleenlatausta (sama periaate kuin hauku_paused_v1:lla).
+    if (cfg.role === "dog" && isListeningEnabled()) {
+      startSoundDetection(db, cfg);
     }
   }).catch(err => {
     setStatus("Kirjautumisvirhe: " + err.message);
@@ -563,6 +577,9 @@ function filterImplausibleJumps(points) {
   return filtered;
 }
 
+let alertTimers = {};    // uid -> timeoutId (visuaalisen renkaan sammutus)
+let lastAlertSeen = {};  // uid -> alertAt (ms) - viimeksi reagoitu hälytysaikaleima
+
 function startListeningToGroup(db, cfg) {
   db.collection("groups").doc(cfg.groupCode).collection("members")
     .onSnapshot((snapshot) => {
@@ -577,13 +594,22 @@ function startListeningToGroup(db, cfg) {
 
         if (change.type === "removed") {
           if (markers[uid]) { map.removeLayer(markers[uid]); delete markers[uid]; }
+          if (alertTimers[uid]) { clearTimeout(alertTimers[uid]); delete alertTimers[uid]; }
+          delete lastAlertSeen[uid];
           return;
         }
 
+        // Hälytyksen aktiivisuus lasketaan aikaleimasta paikallisesti (ei erillistä
+        // kuittausta) - ks. hauku-haukkuhalytys-valmistusohje.md kohta 3.
+        const alertAtMs = data.alertAt && data.alertAt.toMillis ? data.alertAt.toMillis() : null;
+        const now = Date.now();
+        const isAlertActive = !!alertAtMs && (now - alertAtMs < ALERT_DURATION_MS);
+
         if (markers[uid]) {
           markers[uid].setLatLng(latlng).setPopupContent(label).setTooltipContent(name);
+          markers[uid].setIcon(iconFor(data.role, isAlertActive));
         } else {
-          markers[uid] = L.marker(latlng, { icon: iconFor(data.role) })
+          markers[uid] = L.marker(latlng, { icon: iconFor(data.role, isAlertActive) })
             .addTo(map)
             .bindPopup(label)
             .bindTooltip(name, {
@@ -592,6 +618,20 @@ function startListeningToGroup(db, cfg) {
               offset: [0, -10],
               className: "marker-label"
             });
+        }
+
+        // Uusi hälytys (aikaleima ei ole sama kuin viimeksi käsitelty) - soitetaan
+        // äänimerkki (ei omalle laitteelle) ja ajastetaan visuaalisen renkaan sammutus.
+        if (alertAtMs && isAlertActive && lastAlertSeen[uid] !== alertAtMs) {
+          lastAlertSeen[uid] = alertAtMs;
+          const isSelf = currentAuth?.currentUser?.uid === uid;
+          if (!isSelf) playAlertBeep();
+
+          if (alertTimers[uid]) clearTimeout(alertTimers[uid]);
+          const remaining = ALERT_DURATION_MS - (now - alertAtMs);
+          alertTimers[uid] = setTimeout(() => {
+            if (markers[uid]) markers[uid].setIcon(iconFor(data.role, false));
+          }, Math.max(remaining, 0));
         }
 
         if (firstFix) { map.setView(latlng, 15); firstFix = false; }
@@ -622,11 +662,144 @@ function startListeningToGroup(db, cfg) {
     });
 }
 
+// ---- Haukkuhälytys (vaihe 1: äänenvoimakkuustunnistus) ----
+// Ks. hauku-haukkuhalytys-valmistusohje.md - pluggable detectSound-rajapinta,
+// jotta vaihe 2 (ML-luokittelu) voidaan liittää myöhemmin korvaamalla vain
+// tämä yksi funktio muun koodin pysyessä koskemattomana.
+
+const LISTEN_KEY = "hauku_listening_v1";
+const ALERT_DURATION_MS = 60 * 1000; // hälytys näkyy tämän ajan viimeisimmästä laukeamisesta
+const ALERT_WRITE_MIN_INTERVAL_MS = 10 * 1000; // ei kirjoiteta Firestoreen useammin kuin tämän välein
+const SOUND_VOLUME_THRESHOLD = 0.35; // 0..1, kiinteä kynnysarvo (päätös: ei asetuksissa säädettävä)
+
+let audioContext = null, analyserNode = null, micStream = null, detectionRafId = null;
+let isListening = false;
+let lastAlertWriteTime = 0;
+
+// Vaihe 1: palauttaa true/false äänenvoimakkuuden (RMS) perusteella.
+// Vaihe 2 (myöhemmin): sama signatuuri, mutta ML-luokittelu sisällä.
+function detectSound(analyser) {
+  const data = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(data);
+  let sumSquares = 0;
+  for (let i = 0; i < data.length; i++) {
+    const normalized = (data[i] - 128) / 128;
+    sumSquares += normalized * normalized;
+  }
+  const rms = Math.sqrt(sumSquares / data.length);
+  return rms > SOUND_VOLUME_THRESHOLD;
+}
+
+function isListeningEnabled() {
+  return localStorage.getItem(LISTEN_KEY) === "true";
+}
+
+function setListeningEnabled(enabled) {
+  localStorage.setItem(LISTEN_KEY, enabled ? "true" : "false");
+}
+
+function setListenButtonLabel(listening) {
+  const btn = document.getElementById("listenBtn");
+  if (btn) btn.textContent = listening ? "Pysäytä kuuntelu" : "Kuuntele ääntä";
+}
+
+// Lyhyt synteettinen piippaussarja - ei vaadi erillistä äänitiedostoa.
+function playAlertBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    let t = ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 880;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.2, t);
+      osc.start(t);
+      osc.stop(t + 0.15);
+      t += 0.23;
+    }
+  } catch (e) {
+    // Selain ei tue tai AudioContext estetty (esim. ei käyttäjän gesturea) - ei kriittistä.
+  }
+}
+
+function writeAlert(db, cfg) {
+  const uid = currentAuth?.currentUser?.uid;
+  if (!uid) return;
+  db.collection("groups").doc(cfg.groupCode).collection("members").doc(uid)
+    .set({ alertAt: firebase.firestore.Timestamp.now() }, { merge: true });
+}
+
+function startSoundDetection(db, cfg) {
+  if (isListening) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus("Selain ei tue mikrofonia.");
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+    micStream = stream;
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioContext.createMediaStreamSource(stream);
+    analyserNode = audioContext.createAnalyser();
+    analyserNode.fftSize = 2048;
+    source.connect(analyserNode);
+
+    isListening = true;
+    setListeningEnabled(true);
+    setListenButtonLabel(true);
+
+    const loop = () => {
+      if (!isListening) return;
+      if (detectSound(analyserNode)) {
+        const now = Date.now();
+        if (now - lastAlertWriteTime > ALERT_WRITE_MIN_INTERVAL_MS) {
+          lastAlertWriteTime = now;
+          writeAlert(db, cfg);
+        }
+      }
+      detectionRafId = requestAnimationFrame(loop);
+    };
+    loop();
+  }).catch((err) => {
+    setStatus("Mikrofonilupa evätty tai virhe: " + err.message);
+  });
+}
+
+function stopSoundDetection() {
+  isListening = false;
+  setListeningEnabled(false);
+  if (detectionRafId !== null) cancelAnimationFrame(detectionRafId);
+  detectionRafId = null;
+  if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+  if (audioContext) { audioContext.close(); audioContext = null; }
+  analyserNode = null;
+  setListenButtonLabel(false);
+}
+
+function toggleListening() {
+  if (isListening) {
+    stopSoundDetection();
+  } else {
+    if (!currentDb || !currentCfg) {
+      setStatus("Odota hetki, yhteys ei ole vielä valmis...");
+      return;
+    }
+    startSoundDetection(currentDb, currentCfg);
+  }
+}
+
+function addListenButton() {
+  const btn = document.getElementById("listenBtn");
+  if (btn) btn.addEventListener("click", toggleListening);
+}
+
 // ---- Käynnistys ----
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v28";
+const APP_VERSION = "v29";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -684,6 +857,7 @@ function boot() {
     showSettingsOverlay((cfg) => startPackTracker(cfg));
   });
   addPauseButton();
+  addListenButton();
 
   if (hasFirebase && hasGroup && hasName && hasRole) {
     saveConfig(merged);
