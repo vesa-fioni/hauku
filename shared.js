@@ -64,6 +64,7 @@ function renderConfigForm(existing, urlCfg) {
   const fbValue = (key) => existing?.firebase?.[key] || urlCfg.firebase?.[key] || "";
   const roleValue = existing?.role || urlCfg.role || "hunter";
   const mapStyleValue = existing?.mapStyle || urlCfg.mapStyle || "osm";
+  const autoStopValue = existing?.autoStopMinutes ?? urlCfg.autoStopMinutes ?? 15;
 
   const groupField = groupFromUrl
     ? `<p class="hint">Ryhmä: <strong>${groupValue}</strong> (linkistä)</p>
@@ -124,6 +125,10 @@ function renderConfigForm(existing, urlCfg) {
           </label>
         </div>
 
+        <label>Automaattinen pysäytys (min)</label>
+        <input id="cfg_autoStop" type="number" min="0" step="1" value="${autoStopValue}">
+        <p class="hint">Lähetys pysähtyy automaattisesti tämän ajan jälkeen käynnistyksestä. 0 = ei koskaan.</p>
+
         ${firebaseFields}
 
         <button id="cfg_save" class="btn btn-primary">Tallenna ja aloita</button>
@@ -144,11 +149,14 @@ function attachConfigFormHandlers(container, onSave) {
   container.querySelector("#cfg_save").addEventListener("click", () => {
     const role = container.querySelector('input[name="cfg_role"]:checked')?.value || "hunter";
     const mapStyle = container.querySelector('input[name="cfg_mapStyle"]:checked')?.value || "osm";
+    const autoStopRaw = parseInt(container.querySelector("#cfg_autoStop").value, 10);
+    const autoStopMinutes = Number.isFinite(autoStopRaw) && autoStopRaw >= 0 ? autoStopRaw : 15;
     const cfg = {
       groupCode: container.querySelector("#cfg_group").value.trim(),
       name: container.querySelector("#cfg_name").value.trim() || "Tuntematon",
       role,
       mapStyle,
+      autoStopMinutes,
       firebase: {
         apiKey: container.querySelector("#cfg_apiKey").value.trim(),
         authDomain: container.querySelector("#cfg_authDomain").value.trim(),
@@ -262,6 +270,7 @@ function iconFor(role) {
 
 let currentDb = null, currentAuth = null, currentCfg = null;
 let isSending = false;
+let autoStopTimerId = null;
 
 function setStatus(text) {
   const el = document.getElementById("statusText");
@@ -276,6 +285,7 @@ function setPauseButtonLabel(sending) {
 function togglePauseResume() {
   if (isSending) {
     if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    if (autoStopTimerId !== null) { clearTimeout(autoStopTimerId); autoStopTimerId = null; }
     watchId = null;
     isSending = false;
     setStatus("Lähetys pysäytetty");
@@ -333,7 +343,20 @@ function startSendingLocation(db, auth, cfg) {
     return;
   }
   if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  if (autoStopTimerId !== null) { clearTimeout(autoStopTimerId); autoStopTimerId = null; }
   isSending = true;
+
+  const autoStopMinutes = cfg.autoStopMinutes ?? 15;
+  if (autoStopMinutes > 0) {
+    autoStopTimerId = setTimeout(() => {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+      isSending = false;
+      autoStopTimerId = null;
+      setStatus("Lähetys pysäytetty automaattisesti (" + autoStopMinutes + " min)");
+      setPauseButtonLabel(false);
+    }, autoStopMinutes * 60 * 1000);
+  }
 
   const MIN_INTERVAL_MS = 10000; // päivitä Firestoreen korkeintaan kerran 10 sekunnissa
   let lastWriteTime = 0;
@@ -439,7 +462,14 @@ function startListeningToGroup(db, cfg) {
 
 // ---- Käynnistys ----
 
+// Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
+// Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
+const APP_VERSION = "v16";
+
 function boot() {
+  const versionEl = document.getElementById("appVersion");
+  if (versionEl) versionEl.textContent = APP_VERSION;
+
   const urlCfg = getUrlConfig();
   const existing = loadConfig();
 
@@ -448,6 +478,7 @@ function boot() {
   if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
   if (!merged.role && urlCfg.role) merged.role = urlCfg.role;
   if (!merged.mapStyle) merged.mapStyle = urlCfg.mapStyle || "osm";
+  if (merged.autoStopMinutes === undefined) merged.autoStopMinutes = urlCfg.autoStopMinutes ?? 15;
 
   const hasFirebase = merged.firebase && merged.firebase.apiKey && merged.firebase.projectId;
   const hasGroup = !!merged.groupCode;
