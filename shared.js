@@ -281,10 +281,13 @@ function startSendingLocation(db, auth, cfg) {
       updatedAt: firebase.firestore.Timestamp.now()
     }, { merge: true });
 
-    memberRef.collection("track").add({
-      lat, lng,
-      timestamp: firebase.firestore.Timestamp.now()
-    });
+    // Jälki (track) tallennetaan vain koiramoodissa - metsästäjän reittiä ei ole tarpeen seurata
+    if (cfg.role === "dog") {
+      memberRef.collection("track").add({
+        lat, lng,
+        timestamp: firebase.firestore.Timestamp.now()
+      });
+    }
 
     setStatus("Lähetetään sijaintia... (" + new Date().toLocaleTimeString() + ")");
   }, (err) => {
@@ -327,7 +330,9 @@ function startListeningToGroup(db, cfg) {
       snapshot.docs.forEach((doc) => {
         const uid = doc.id;
         if (trails[uid]) return;
-        trails[uid] = L.polyline([], { color: doc.data().role === "dog" ? "#f97316" : "#1b4332", weight: 3 }).addTo(map);
+        if (doc.data().role !== "dog") return; // vain koiran jälki piirretään
+
+        trails[uid] = L.polyline([], { color: "#f97316", weight: 3 }).addTo(map);
 
         db.collection("groups").doc(cfg.groupCode).collection("members").doc(uid)
           .collection("track").orderBy("timestamp").limitToLast(500)
