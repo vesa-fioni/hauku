@@ -443,6 +443,33 @@ function startSendingLocation(db, auth, cfg) {
   });
 }
 
+function filterImplausibleJumps(points) {
+  // points: [{lat, lng, timeMs}, ...] aikajärjestyksessä.
+  // Sama logiikka kuin kirjoitusvaiheessa: hylätään pisteet joihin siirtyminen
+  // edellisestä hyväksytystä pisteestä vaatisi epärealistisen nopeuden.
+  const MAX_SPEED_MPS = 55; // ~200 km/h
+  const filtered = [];
+  let last = null;
+
+  for (const p of points) {
+    if (!last) {
+      filtered.push(p);
+      last = p;
+      continue;
+    }
+    const distance = haversineMeters(last.lat, last.lng, p.lat, p.lng);
+    const elapsedSec = (p.timeMs - last.timeMs) / 1000;
+    const speed = elapsedSec > 0 ? distance / elapsedSec : 0;
+
+    if (distance > 50 && speed > MAX_SPEED_MPS) {
+      continue; // ohitetaan epäuskottava hyppy, ei päivitetä 'last':ia
+    }
+    filtered.push(p);
+    last = p;
+  }
+  return filtered;
+}
+
 function startListeningToGroup(db, cfg) {
   db.collection("groups").doc(cfg.groupCode).collection("members")
     .onSnapshot((snapshot) => {
@@ -490,7 +517,13 @@ function startListeningToGroup(db, cfg) {
         db.collection("groups").doc(cfg.groupCode).collection("members").doc(uid)
           .collection("track").orderBy("timestamp").limitToLast(500)
           .onSnapshot((trackSnap) => {
-            trails[uid].setLatLngs(trackSnap.docs.map(d => [d.data().lat, d.data().lng]));
+            const rawPoints = trackSnap.docs.map(d => ({
+              lat: d.data().lat,
+              lng: d.data().lng,
+              timeMs: d.data().timestamp?.toMillis ? d.data().timestamp.toMillis() : 0
+            }));
+            const cleaned = filterImplausibleJumps(rawPoints);
+            trails[uid].setLatLngs(cleaned.map(p => [p.lat, p.lng]));
           });
       });
     });
@@ -500,7 +533,7 @@ function startListeningToGroup(db, cfg) {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v20";
+const APP_VERSION = "v21";
 
 function boot() {
   const versionEl = document.getElementById("appVersion");
