@@ -113,17 +113,22 @@ function renderConfigForm(existing, urlCfg) {
        <input type="hidden" id="cfg_authDomain" value="${fbValue("authDomain")}">
        <input type="hidden" id="cfg_projectId" value="${fbValue("projectId")}">
        <input type="hidden" id="cfg_appId" value="${fbValue("appId")}">`
-    : `<label>Firebase apiKey</label>
-       <input id="cfg_apiKey" value="${fbValue("apiKey")}">
+    : `<p class="hint">
+         <a href="#" id="cfg_advanced_toggle">Lisäasetukset (Firebase-yhteys)</a>
+       </p>
+       <div id="cfg_advanced" class="advanced-section" style="display:none;">
+         <label>Firebase apiKey</label>
+         <input id="cfg_apiKey" value="${fbValue("apiKey")}">
 
-       <label>Firebase authDomain</label>
-       <input id="cfg_authDomain" value="${fbValue("authDomain")}">
+         <label>Firebase authDomain</label>
+         <input id="cfg_authDomain" value="${fbValue("authDomain")}">
 
-       <label>Firebase projectId</label>
-       <input id="cfg_projectId" value="${fbValue("projectId")}">
+         <label>Firebase projectId</label>
+         <input id="cfg_projectId" value="${fbValue("projectId")}">
 
-       <label>Firebase appId</label>
-       <input id="cfg_appId" value="${fbValue("appId")}">`;
+         <label>Firebase appId</label>
+         <input id="cfg_appId" value="${fbValue("appId")}">
+       </div>`;
 
   return `
     <div class="onboard-card">
@@ -255,6 +260,21 @@ function attachConfigFormHandlers(container, onSave) {
       nameInput.focus();
       const hint = newGroupLink.closest("p");
       if (hint) hint.textContent = "Uusi ryhmä luodaan tallennettaessa - jaa linkki tallennuksen jälkeen kutsuaksesi muut.";
+    });
+  }
+
+  // "Lisäasetukset" - näyttää/piilottaa tekniset Firebase-kentät, jotta ne
+  // eivät ole oletuksena näkyvissä tavallisessa käytössä.
+  const advancedToggle = container.querySelector("#cfg_advanced_toggle");
+  const advancedSection = container.querySelector("#cfg_advanced");
+  if (advancedToggle && advancedSection) {
+    advancedToggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      const isHidden = advancedSection.style.display === "none";
+      advancedSection.style.display = isHidden ? "block" : "none";
+      advancedToggle.textContent = isHidden
+        ? "Piilota lisäasetukset"
+        : "Lisäasetukset (Firebase-yhteys)";
     });
   }
 }
@@ -861,7 +881,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v35";
+const APP_VERSION = "v36";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
