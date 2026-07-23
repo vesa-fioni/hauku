@@ -309,7 +309,8 @@ function startListeningToGroup(db, cfg) {
         if (!data.lat || !data.lng) return;
 
         const latlng = [data.lat, data.lng];
-        const label = `${data.name || "Tuntematon"} (${data.role === "dog" ? "koira" : "metsästäjä"})`;
+        const name = data.name || "Tuntematon";
+        const label = `${name} (${data.role === "dog" ? "koira" : "metsästäjä"})`;
 
         if (change.type === "removed") {
           if (markers[uid]) { map.removeLayer(markers[uid]); delete markers[uid]; }
@@ -317,9 +318,17 @@ function startListeningToGroup(db, cfg) {
         }
 
         if (markers[uid]) {
-          markers[uid].setLatLng(latlng).setPopupContent(label);
+          markers[uid].setLatLng(latlng).setPopupContent(label).setTooltipContent(name);
         } else {
-          markers[uid] = L.marker(latlng, { icon: iconFor(data.role) }).addTo(map).bindPopup(label);
+          markers[uid] = L.marker(latlng, { icon: iconFor(data.role) })
+            .addTo(map)
+            .bindPopup(label)
+            .bindTooltip(name, {
+              permanent: true,
+              direction: "top",
+              offset: [0, -10],
+              className: "marker-label"
+            });
         }
 
         if (firstFix) { map.setView(latlng, 15); firstFix = false; }
