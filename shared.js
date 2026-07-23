@@ -603,14 +603,46 @@ function startListeningToGroup(db, cfg) {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v26";
+const APP_VERSION = "v27";
+
+// Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
+// kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
+// (aiempi käytös) tai ylikirjoitetaan automaattisesti ilman kysymystä.
+// Palauttaa configin josta jatketaan (joko alkuperäinen tai linkiltä vaihdettu).
+function resolveGroupConflict(existing, urlCfg) {
+  if (!existing || !existing.groupCode || !urlCfg.groupCode) return existing;
+  if (urlCfg.groupCode === existing.groupCode) return existing;
+
+  const currentLabel = existing.groupName || existing.groupCode;
+  const linkLabel = urlCfg.groupName || urlCfg.groupCode;
+
+  const switchToLink = confirm(
+    `Tällä laitteella on jo käytössä ryhmä "${currentLabel}".\n\n` +
+    `Avattu linkki vie ryhmään "${linkLabel}".\n\n` +
+    `Vaihdetaanko ryhmään "${linkLabel}"?\n` +
+    `(Peruuta = jatketaan ryhmässä "${currentLabel}")`
+  );
+
+  if (!switchToLink) return existing;
+
+  // Vaihdetaan ryhmä - ryhmäkoodi, -nimi, Firebase-konfiguraatio ja mahdollinen
+  // linkiltä tuleva rooli otetaan käyttöön. Oma nimi ja muut henkilökohtaiset
+  // asetukset (karttatyyli, automaattipysäytys) säilytetään ennallaan.
+  return {
+    ...existing,
+    groupCode: urlCfg.groupCode,
+    groupName: urlCfg.groupName || urlCfg.groupCode,
+    firebase: urlCfg.firebase || existing.firebase,
+    role: urlCfg.role || existing.role
+  };
+}
 
 function boot() {
   const versionEl = document.getElementById("appVersion");
   if (versionEl) versionEl.textContent = APP_VERSION;
 
   const urlCfg = getUrlConfig();
-  const existing = loadConfig();
+  const existing = resolveGroupConflict(loadConfig(), urlCfg);
 
   const merged = existing ? { ...existing } : {};
   if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
