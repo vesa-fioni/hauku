@@ -4,6 +4,16 @@
 
 const CONFIG_KEY = "hauku_config_v1";
 
+// GPS-tarkkuussuodatin: pos.coords.accuracy (metriä) tätä huonompi piste
+// hylätään suoraan, ennen nopeuslaskentaa. Kiinni erityisesti solutorni-/
+// WiFi-paikannukseen puiden katveessa (paljon suurempi accuracy-arvo kuin
+// oikea GPS-lukema). Sama varaventtiili-periaate kuin nopeussuodattimessa:
+// jos useampi peräkkäinen piste hylätään pelkän tarkkuuden takia, seuraava
+// hyväksytään pakolla ettei jälki/sijainti jää pysyvästi jumiin jos oikea
+// signaali on aidosti pysyvästi huono (esim. koko retki syvässä metsässä).
+const MAX_ACCURACY_METERS = 100;
+const MAX_CONSECUTIVE_ACCURACY_REJECTS = 3;
+
 // ---- Config: lataus, tallennus, URL-oletukset ----
 
 function loadConfig() {
@@ -493,6 +503,7 @@ function startSendingLocation(db, auth, cfg) {
   let lastWriteTime = 0;
   let lastGoodFix = null; // { lat, lng, time } - viimeisin hyväksytty sijainti hyppysuodatinta varten
   let consecutiveRejects = 0;
+  let consecutiveAccuracyRejects = 0;
 
   // Jos laskettu nopeus edelliseen hyväksyttyyn pisteeseen on tätä suurempi, pistettä pidetään
   // GPS-häiriönä ("teleporttauksena") ja se hylätään. 55 m/s ≈ 200 km/h - sallii myös autokyydin,
@@ -510,6 +521,20 @@ function startSendingLocation(db, auth, cfg) {
 
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
+    const accuracy = pos.coords.accuracy;
+
+    // GPS-tarkkuussuodatin: hylätään epätarkat lukemat (esim. solutorni-/WiFi-
+    // paikannus puiden katveessa) ennen nopeuslaskentaa - ks. MAX_ACCURACY_METERS.
+    if (typeof accuracy === "number" && accuracy > MAX_ACCURACY_METERS) {
+      if (consecutiveAccuracyRejects < MAX_CONSECUTIVE_ACCURACY_REJECTS) {
+        consecutiveAccuracyRejects++;
+        setStatus("Ohitettu epätarkka sijainti (tarkkuus ~" + Math.round(accuracy) + " m)");
+        return;
+      }
+      // Varaventtiili lauennut - hyväksytään pakolla, ettei lähetys jää jumiin
+      // jos signaali on aidosti pysyvästi huono.
+    }
+    consecutiveAccuracyRejects = 0;
 
     if (lastGoodFix) {
       const distance = haversineMeters(lastGoodFix.lat, lastGoodFix.lng, lat, lng);
@@ -545,10 +570,13 @@ function startSendingLocation(db, auth, cfg) {
       expiresAt
     }, { merge: true });
 
-    // Jälki (track) tallennetaan vain koiramoodissa - metsästäjän reittiä ei ole tarpeen seurata
+    // Jälki (track) tallennetaan vain koiramoodissa - metsästäjän reittiä ei ole tarpeen seurata.
+    // accuracy tallennetaan myös tänne, jotta näyttöpuolen tarkkuussuodatin (filterImplausibleJumps)
+    // voi hylätä epätarkat pisteet jo tallennetusta jäljestä, ei vain uusia kirjoitettaessa.
     if (cfg.role === "dog") {
       memberRef.collection("track").add({
         lat, lng,
+        accuracy,
         timestamp: firebase.firestore.Timestamp.now(),
         expiresAt
       });
@@ -565,14 +593,25 @@ function startSendingLocation(db, auth, cfg) {
 }
 
 function filterImplausibleJumps(points) {
-  // points: [{lat, lng, timeMs}, ...] aikajärjestyksessä.
+  // points: [{lat, lng, timeMs, accuracy}, ...] aikajärjestyksessä.
   // Sama logiikka kuin kirjoitusvaiheessa: hylätään pisteet joihin siirtyminen
-  // edellisestä hyväksytystä pisteestä vaatisi epärealistisen nopeuden.
+  // edellisestä hyväksytystä pisteestä vaatisi epärealistisen nopeuden, sekä
+  // pisteet joiden GPS-tarkkuus on liian huono (ks. MAX_ACCURACY_METERS).
   const MAX_SPEED_MPS = 55; // ~200 km/h
   const filtered = [];
   let last = null;
+  let consecutiveAccuracyRejects = 0;
 
   for (const p of points) {
+    if (typeof p.accuracy === "number" && p.accuracy > MAX_ACCURACY_METERS) {
+      if (consecutiveAccuracyRejects < MAX_CONSECUTIVE_ACCURACY_REJECTS) {
+        consecutiveAccuracyRejects++;
+        continue; // ohitetaan epätarkka piste, ei päivitetä 'last':ia
+      }
+      // Varaventtiili lauennut - hyväksytään pakolla jäljen jatkumiseksi.
+    }
+    consecutiveAccuracyRejects = 0;
+
     if (!last) {
       filtered.push(p);
       last = p;
@@ -675,6 +714,7 @@ function startListeningToGroup(db, cfg) {
             const rawPoints = trackSnap.docs.map(d => ({
               lat: d.data().lat,
               lng: d.data().lng,
+              accuracy: d.data().accuracy,
               timeMs: d.data().timestamp?.toMillis ? d.data().timestamp.toMillis() : 0
             }));
             const cleaned = filterImplausibleJumps(rawPoints);
@@ -821,7 +861,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v31";
+const APP_VERSION = "v32";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
