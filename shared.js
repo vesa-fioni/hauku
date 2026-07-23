@@ -334,12 +334,26 @@ function setMapStyle(style) {
 }
 
 function iconFor(role, alertActive) {
+  const SIZE = 30;
   const color = role === "dog" ? "#f97316" : "#1b4332";
+  const emoji = role === "dog" ? "🐕" : "🧍";
   const ring = alertActive ? `<div class="alert-ring"></div>` : "";
+  const badge = alertActive
+    ? `<div class="alert-badge" title="Haukkuu">🔊</div>`
+    : "";
   return L.divIcon({
     className: "",
-    html: `<div style="position:relative;width:16px;height:16px;">${ring}<div style="background:${color};width:16px;height:16px;border-radius:50%;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.5);"></div></div>`,
-    iconSize: [16, 16]
+    html: `
+      <div style="position:relative;width:${SIZE}px;height:${SIZE}px;">
+        ${ring}
+        <div style="background:${color};width:${SIZE}px;height:${SIZE}px;border-radius:50%;
+                    border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.5);
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:16px;line-height:1;">${emoji}</div>
+        ${badge}
+      </div>`,
+    iconSize: [SIZE, SIZE],
+    iconAnchor: [SIZE / 2, SIZE / 2]
   });
 }
 
@@ -605,23 +619,28 @@ function startListeningToGroup(db, cfg) {
         const now = Date.now();
         const isAlertActive = !!alertAtMs && (now - alertAtMs < ALERT_DURATION_MS);
 
+        // Tooltip kertoo hälytyksen sanallisesti ("haukkuu!") - rengas/badge ei jää
+        // arvailun varaan siitä mitä se tarkoittaa.
+        const tooltipText = isAlertActive ? `${name} 🐕 haukkuu!` : name;
+
         if (markers[uid]) {
-          markers[uid].setLatLng(latlng).setPopupContent(label).setTooltipContent(name);
+          markers[uid].setLatLng(latlng).setPopupContent(label).setTooltipContent(tooltipText);
           markers[uid].setIcon(iconFor(data.role, isAlertActive));
         } else {
           markers[uid] = L.marker(latlng, { icon: iconFor(data.role, isAlertActive) })
             .addTo(map)
             .bindPopup(label)
-            .bindTooltip(name, {
+            .bindTooltip(tooltipText, {
               permanent: true,
               direction: "top",
-              offset: [0, -10],
+              offset: [0, -18],
               className: "marker-label"
             });
         }
 
         // Uusi hälytys (aikaleima ei ole sama kuin viimeksi käsitelty) - soitetaan
-        // äänimerkki (ei omalle laitteelle) ja ajastetaan visuaalisen renkaan sammutus.
+        // äänimerkki (ei omalle laitteelle) ja ajastetaan visuaalisen renkaan/tooltipin
+        // palautus ennalleen.
         if (alertAtMs && isAlertActive && lastAlertSeen[uid] !== alertAtMs) {
           lastAlertSeen[uid] = alertAtMs;
           const isSelf = currentAuth?.currentUser?.uid === uid;
@@ -630,7 +649,10 @@ function startListeningToGroup(db, cfg) {
           if (alertTimers[uid]) clearTimeout(alertTimers[uid]);
           const remaining = ALERT_DURATION_MS - (now - alertAtMs);
           alertTimers[uid] = setTimeout(() => {
-            if (markers[uid]) markers[uid].setIcon(iconFor(data.role, false));
+            if (markers[uid]) {
+              markers[uid].setIcon(iconFor(data.role, false));
+              markers[uid].setTooltipContent(name);
+            }
           }, Math.max(remaining, 0));
         }
 
@@ -799,7 +821,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v29";
+const APP_VERSION = "v30";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan

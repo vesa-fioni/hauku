@@ -177,13 +177,19 @@
 
   /* Haukkuhälytyksen visuaalinen rengas kartan merkin ympärillä */
   .alert-ring {
-    position: absolute; top: -8px; left: -8px; width: 32px; height: 32px;
+    position: absolute; top: -8px; left: -8px; width: 46px; height: 46px;
     border-radius: 50%; border: 3px solid #ef4444;
     animation: alertPulse 1s ease-out infinite;
   }
   @keyframes alertPulse {
     0% { transform: scale(0.6); opacity: 1; }
     100% { transform: scale(1.7); opacity: 0; }
+  }
+  .alert-badge {
+    position: absolute; bottom: -4px; right: -4px;
+    background: #ef4444; color: white; border-radius: 50%;
+    width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
   }
 
   .marker-label {
@@ -231,6 +237,6 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="shared.js?v=29"></script>
+  <script src="shared.js?v=30"></script>
 </body>
 </html>
