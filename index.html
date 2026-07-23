@@ -84,7 +84,20 @@
   }
 
   /* ---- Sovellusnäkymä (kartta) ---- */
-  #app { display: none; height: 100%; }
+  #app { display: none; height: 100%; flex-direction: column; }
+
+  #appHeader {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px;
+    background: white;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    z-index: 1500;
+  }
+  #appHeader img { height: 26px; }
+  #appHeader span { font-weight: 700; font-size: 16px; color: var(--forest); }
+
+  #mapWrap { position: relative; flex: 1 1 auto; min-height: 0; }
   #map { height: 100%; }
 
   #status {
@@ -124,15 +137,21 @@
   <div id="onboarding"></div>
 
   <div id="app">
-    <div id="topbar" class="topbar"></div>
-    <div id="status">Ladataan...</div>
-    <div id="map"></div>
+    <div id="appHeader">
+      <img src="logo.png?v=2" alt="">
+      <span>Hauku</span>
+    </div>
+    <div id="mapWrap">
+      <div id="topbar" class="topbar"></div>
+      <div id="status">Ladataan...</div>
+      <div id="map"></div>
+    </div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="shared.js?v=7"></script>
+  <script src="shared.js?v=8"></script>
 </body>
 </html>

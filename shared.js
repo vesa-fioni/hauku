@@ -242,7 +242,8 @@ const MAP_STYLES = {
 
 function initMap(style) {
   if (!map) {
-    map = L.map("map").setView([61.9241, 25.7482], 13);
+    map = L.map("map", { zoomControl: false }).setView([61.9241, 25.7482], 13);
+    L.control.zoom({ position: "bottomleft" }).addTo(map);
   }
   setMapStyle(style || "osm");
 }
@@ -275,7 +276,7 @@ function setTopbar(role) {
 }
 
 function startPackTracker(cfg) {
-  document.getElementById("app").style.display = "block";
+  document.getElementById("app").style.display = "flex";
   initMap(cfg.mapStyle);
   setTopbar(cfg.role);
 
