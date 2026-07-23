@@ -28,6 +28,9 @@ function getUrlConfig() {
   const role = p.get("role");
   if (role === "dog" || role === "hunter") result.role = role;
 
+  const mapStyle = p.get("mapStyle");
+  if (mapStyle === "osm" || mapStyle === "topo") result.mapStyle = mapStyle;
+
   const fb = {};
   ["apiKey", "authDomain", "projectId", "appId"].forEach((key) => {
     const val = p.get(key);
@@ -60,6 +63,7 @@ function renderConfigForm(existing, urlCfg) {
   const groupValue = existing?.groupCode || urlCfg.groupCode || "";
   const fbValue = (key) => existing?.firebase?.[key] || urlCfg.firebase?.[key] || "";
   const roleValue = existing?.role || urlCfg.role || "hunter";
+  const mapStyleValue = existing?.mapStyle || urlCfg.mapStyle || "osm";
 
   const groupField = groupFromUrl
     ? `<p class="hint">Ryhmä: <strong>${groupValue}</strong> (linkistä)</p>
@@ -108,6 +112,18 @@ function renderConfigForm(existing, urlCfg) {
           </label>
         </div>
 
+        <label>Karttatyyli</label>
+        <div class="role-toggle">
+          <label class="role-option">
+            <input type="radio" name="cfg_mapStyle" value="osm" ${mapStyleValue !== "topo" ? "checked" : ""}>
+            Nopea (oletus)
+          </label>
+          <label class="role-option">
+            <input type="radio" name="cfg_mapStyle" value="topo" ${mapStyleValue === "topo" ? "checked" : ""}>
+            Maasto
+          </label>
+        </div>
+
         ${firebaseFields}
 
         <button id="cfg_save" class="btn btn-primary">Tallenna ja aloita</button>
@@ -127,10 +143,12 @@ function renderConfigForm(existing, urlCfg) {
 function attachConfigFormHandlers(container, onSave) {
   container.querySelector("#cfg_save").addEventListener("click", () => {
     const role = container.querySelector('input[name="cfg_role"]:checked')?.value || "hunter";
+    const mapStyle = container.querySelector('input[name="cfg_mapStyle"]:checked')?.value || "osm";
     const cfg = {
       groupCode: container.querySelector("#cfg_group").value.trim(),
       name: container.querySelector("#cfg_name").value.trim() || "Tuntematon",
       role,
+      mapStyle,
       firebase: {
         apiKey: container.querySelector("#cfg_apiKey").value.trim(),
         authDomain: container.querySelector("#cfg_authDomain").value.trim(),
@@ -205,16 +223,34 @@ function addSettingsButton(onReopen) {
 
 // ---- Kartta + Firebase ----
 
-let map, markers = {}, trails = {}, firstFix = true;
+let map, tileLayer, markers = {}, trails = {}, firstFix = true;
 let watchId = null;
 
-function initMap() {
-  if (map) return;
-  map = L.map("map").setView([61.9241, 25.7482], 13);
-  L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
-    attribution: "&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap (CC-BY-SA)",
-    maxZoom: 17
-  }).addTo(map);
+const MAP_STYLES = {
+  osm: {
+    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    options: { attribution: "&copy; OpenStreetMap contributors" }
+  },
+  topo: {
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    options: {
+      attribution: "&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap (CC-BY-SA)",
+      maxZoom: 17
+    }
+  }
+};
+
+function initMap(style) {
+  if (!map) {
+    map = L.map("map").setView([61.9241, 25.7482], 13);
+  }
+  setMapStyle(style || "osm");
+}
+
+function setMapStyle(style) {
+  const conf = MAP_STYLES[style] || MAP_STYLES.osm;
+  if (tileLayer) map.removeLayer(tileLayer);
+  tileLayer = L.tileLayer(conf.url, conf.options).addTo(map);
 }
 
 function iconFor(role) {
@@ -240,7 +276,7 @@ function setTopbar(role) {
 
 function startPackTracker(cfg) {
   document.getElementById("app").style.display = "block";
-  initMap();
+  initMap(cfg.mapStyle);
   setTopbar(cfg.role);
 
   firebase.initializeApp(cfg.firebase);
@@ -364,6 +400,7 @@ function boot() {
   if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
   if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
   if (!merged.role && urlCfg.role) merged.role = urlCfg.role;
+  if (!merged.mapStyle) merged.mapStyle = urlCfg.mapStyle || "osm";
 
   const hasFirebase = merged.firebase && merged.firebase.apiKey && merged.firebase.projectId;
   const hasGroup = !!merged.groupCode;
