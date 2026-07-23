@@ -214,11 +214,8 @@ function showSettingsOverlay(onSave) {
 }
 
 function addSettingsButton(onReopen) {
-  const btn = document.createElement("button");
-  btn.id = "settingsBtn";
-  btn.textContent = "Asetukset";
-  btn.addEventListener("click", onReopen);
-  document.body.appendChild(btn);
+  const btn = document.getElementById("settingsBtn");
+  if (btn) btn.addEventListener("click", onReopen);
 }
 
 // ---- Kartta + Firebase ----
@@ -268,17 +265,17 @@ function setStatus(text) {
   if (el) el.textContent = text;
 }
 
-function setTopbar(role) {
-  const el = document.getElementById("topbar");
-  if (!el) return;
-  el.textContent = role === "dog" ? "Koiramoodi" : "Metsästäjämoodi";
-  el.className = role === "dog" ? "topbar topbar-dog" : "topbar topbar-hunter";
+function setTopbar(role, groupCode) {
+  const dot = document.getElementById("headerRoleDot");
+  const text = document.getElementById("headerGroupText");
+  if (dot) dot.style.background = role === "dog" ? "#f97316" : "#1b4332";
+  if (text) text.textContent = groupCode || "";
 }
 
 function startPackTracker(cfg) {
   document.getElementById("app").style.display = "flex";
   initMap(cfg.mapStyle);
-  setTopbar(cfg.role);
+  setTopbar(cfg.role, cfg.groupCode);
 
   firebase.initializeApp(cfg.firebase);
   const auth = firebase.auth();
