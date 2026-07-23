@@ -464,7 +464,7 @@ function startListeningToGroup(db, cfg) {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v18";
+const APP_VERSION = "v19";
 
 function boot() {
   const versionEl = document.getElementById("appVersion");
