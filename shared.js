@@ -358,11 +358,8 @@ function iconFor(role, alertActive) {
     html: `
       <div style="position:relative;width:${SIZE}px;height:${SIZE}px;">
         ${ring}
-        <div style="background:white;width:${SIZE}px;height:${SIZE}px;border-radius:50%;
-                    border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.5);
-                    display:flex;align-items:center;justify-content:center;overflow:hidden;">
-          <img src="${src}" alt="" style="width:82%;height:82%;object-fit:contain;">
-        </div>
+        <img src="${src}" alt="" style="width:100%;height:100%;object-fit:contain;
+                    filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6));">
         ${badge}
       </div>`,
     iconSize: [SIZE, SIZE],
@@ -864,7 +861,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v33";
+const APP_VERSION = "v34";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
