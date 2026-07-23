@@ -128,24 +128,29 @@ function renderConfigForm(existing, urlCfg) {
 
         <label>Rooli</label>
         <div class="role-toggle">
-          <label class="role-option">
+          <label class="role-option role-option-dog">
             <input type="radio" name="cfg_role" value="dog" ${roleValue === "dog" ? "checked" : ""}>
+            <span class="role-dot"></span>
             Koira
           </label>
-          <label class="role-option">
+          <label class="role-option role-option-hunter">
             <input type="radio" name="cfg_role" value="hunter" ${roleValue === "hunter" ? "checked" : ""}>
+            <span class="role-dot"></span>
             Ihminen
           </label>
         </div>
+        <p class="hint">Koira: sijainti ja kuljettu reitti näkyvät kartalla kaikille. Ihminen: vain nykyinen sijainti näkyy, reittiä ei tallenneta.</p>
 
         <label>Karttatyyli</label>
         <div class="role-toggle">
           <label class="role-option">
             <input type="radio" name="cfg_mapStyle" value="osm" ${mapStyleValue !== "topo" ? "checked" : ""}>
+            <span class="role-dot"></span>
             Nopea (oletus)
           </label>
           <label class="role-option">
             <input type="radio" name="cfg_mapStyle" value="topo" ${mapStyleValue === "topo" ? "checked" : ""}>
+            <span class="role-dot"></span>
             Maasto
           </label>
         </div>
@@ -598,7 +603,7 @@ function startListeningToGroup(db, cfg) {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v23";
+const APP_VERSION = "v24";
 
 function boot() {
   const versionEl = document.getElementById("appVersion");
