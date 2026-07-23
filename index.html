@@ -35,6 +35,14 @@
   .overlay { background: rgba(0,0,0,0.5); padding-top: 40px; }
   .overlay .onboard-card { box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
 
+  .overlay-close {
+    position: fixed; top: 16px; right: 16px; z-index: 2100;
+    width: 36px; height: 36px; border-radius: 50%;
+    border: none; background: rgba(255,255,255,0.95); color: var(--forest);
+    font-size: 22px; line-height: 1; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  }
+
   .onboard-card {
     width: 100%; max-width: 420px;
     background: var(--cream);
@@ -204,6 +212,6 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="shared.js?v=27"></script>
+  <script src="shared.js?v=28"></script>
 </body>
 </html>

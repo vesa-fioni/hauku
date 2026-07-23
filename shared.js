@@ -264,9 +264,32 @@ function showSettingsOverlay(onSave) {
   overlay.className = "overlay";
   overlay.style.display = "flex";
   overlay.innerHTML = renderConfigForm(loadConfig(), {});
+
+  // Sulje-ikoni - mahdollistaa asetusten tarkastelun/sulkemisen ilman että
+  // lomake pitää tallentaa ja startPackTracker käynnistyy uudelleen.
+  const closeBtn = document.createElement("button");
+  closeBtn.id = "settingsCloseBtn";
+  closeBtn.className = "overlay-close";
+  closeBtn.setAttribute("aria-label", "Sulje asetukset");
+  closeBtn.innerHTML = "&times;";
+  overlay.appendChild(closeBtn);
+
   document.body.appendChild(overlay);
+
+  const closeOverlay = () => {
+    if (overlay.parentNode) document.body.removeChild(overlay);
+  };
+
+  closeBtn.addEventListener("click", closeOverlay);
+
+  // Klikkaus taustan tummalle alueelle sulkee myös - mutta ei jos klikataan
+  // itse lomakekorttia (e.target === overlay tarkoittaa taustaa, ei korttia).
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeOverlay();
+  });
+
   attachConfigFormHandlers(overlay, (cfg) => {
-    document.body.removeChild(overlay);
+    closeOverlay();
     onSave(cfg);
   });
 }
@@ -603,7 +626,7 @@ function startListeningToGroup(db, cfg) {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v27";
+const APP_VERSION = "v28";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
