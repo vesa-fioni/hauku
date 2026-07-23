@@ -334,7 +334,7 @@ function setMapStyle(style) {
 }
 
 function iconFor(role, alertActive) {
-  const SIZE = 30;
+  const SIZE = 46;
   const color = role === "dog" ? "#f97316" : "#1b4332";
   const emoji = role === "dog" ? "🐕" : "🧍";
   const ring = alertActive ? `<div class="alert-ring"></div>` : "";
@@ -347,9 +347,9 @@ function iconFor(role, alertActive) {
       <div style="position:relative;width:${SIZE}px;height:${SIZE}px;">
         ${ring}
         <div style="background:${color};width:${SIZE}px;height:${SIZE}px;border-radius:50%;
-                    border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.5);
+                    border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.5);
                     display:flex;align-items:center;justify-content:center;
-                    font-size:16px;line-height:1;">${emoji}</div>
+                    font-size:26px;line-height:1;">${emoji}</div>
         ${badge}
       </div>`,
     iconSize: [SIZE, SIZE],
@@ -633,7 +633,7 @@ function startListeningToGroup(db, cfg) {
             .bindTooltip(tooltipText, {
               permanent: true,
               direction: "top",
-              offset: [0, -18],
+              offset: [0, -28],
               className: "marker-label"
             });
         }
@@ -821,7 +821,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v30";
+const APP_VERSION = "v31";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
