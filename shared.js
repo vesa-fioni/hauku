@@ -16,14 +16,17 @@ function saveConfig(cfg) {
   localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
 }
 
-// Lukee Firebase-avaimet, ryhmäkoodin ja (valinnaisesti) roolin URL-parametreista.
-// Esim. index.html?group=HIRVI24&apiKey=...&authDomain=...&projectId=...&appId=...&role=dog
+// Lukee Firebase-avaimet, liittymiskoodin, ryhmän nimen ja (valinnaisesti) roolin URL-parametreista.
+// Esim. index.html?group=X7K2P9QM&groupName=Syyshirvijahti&apiKey=...&role=dog
 function getUrlConfig() {
   const p = new URLSearchParams(window.location.search);
   const result = {};
 
   const group = p.get("group");
   if (group) result.groupCode = group;
+
+  const groupName = p.get("groupName");
+  if (groupName) result.groupName = groupName;
 
   const role = p.get("role");
   if (role === "dog" || role === "hunter") result.role = role;
@@ -41,9 +44,21 @@ function getUrlConfig() {
   return result;
 }
 
+// Generoi satunnaisen, ei-arvattavan liittymiskoodin. Käyttäjä ei koskaan näe/kirjoita tätä -
+// se kulkee vain jakolinkin mukana. Merkistöstä on jätetty pois helposti sekoittuvat merkit (0/O, 1/I).
+function generateGroupCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 10; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
 function buildShareLink(cfg) {
   const url = new URL(window.location.origin + window.location.pathname);
   if (cfg.groupCode) url.searchParams.set("group", cfg.groupCode);
+  if (cfg.groupName) url.searchParams.set("groupName", cfg.groupName);
   if (cfg.firebase) {
     Object.entries(cfg.firebase).forEach(([k, v]) => {
       if (v) url.searchParams.set(k, v);
@@ -57,20 +72,30 @@ function buildShareLink(cfg) {
 function renderConfigForm(existing, urlCfg) {
   urlCfg = urlCfg || {};
 
-  const groupFromUrl = !!urlCfg.groupCode;
   const firebaseFromUrl = !!urlCfg.firebase;
 
-  const groupValue = existing?.groupCode || urlCfg.groupCode || "";
+  // Liittymiskoodi on aina piilossa käyttäjältä - se kulkee vain jakolinkin mukana.
+  // Jos mikään ei vielä anna koodia (täysin uusi käyttäjä), generoidaan uusi satunnaiskoodi tässä,
+  // ja se pysyy samana koko lomakkeen elinkaaren ajan (talteen otettu piilokenttään).
+  const groupCodeValue = existing?.groupCode || urlCfg.groupCode || generateGroupCode();
+  const groupNameValue = existing?.groupName || urlCfg.groupName || "";
+  const isNewGroup = !existing?.groupCode && !urlCfg.groupCode;
+
   const fbValue = (key) => existing?.firebase?.[key] || urlCfg.firebase?.[key] || "";
   const roleValue = existing?.role || urlCfg.role || "hunter";
   const mapStyleValue = existing?.mapStyle || urlCfg.mapStyle || "osm";
   const autoStopValue = existing?.autoStopMinutes ?? urlCfg.autoStopMinutes ?? 15;
 
-  const groupField = groupFromUrl
-    ? `<p class="hint">Ryhmä: <strong>${groupValue}</strong> (linkistä)</p>
-       <input type="hidden" id="cfg_group" value="${groupValue}">`
-    : `<label>Ryhmäkoodi</label>
-       <input id="cfg_group" placeholder="esim. HIRVI24" value="${groupValue}">`;
+  const groupField = `
+    <label>Ryhmän nimi</label>
+    <input id="cfg_groupName" placeholder="esim. Syyshirvijahti" value="${groupNameValue}">
+    <input type="hidden" id="cfg_group" value="${groupCodeValue}">
+    ${isNewGroup
+      ? `<p class="hint">Uusi ryhmä luodaan tallennettaessa - jaa linkki tallennuksen jälkeen kutsuaksesi muut.</p>`
+      : `<p class="hint">
+           <a href="#" id="cfg_new_group_link">Luo uusi ryhmä tämän sijaan</a>
+         </p>`}
+  `;
 
   const firebaseFields = firebaseFromUrl
     ? `<p class="hint hint-ok">Firebase-yhteys jo asetettu linkin kautta</p>
@@ -138,7 +163,7 @@ function renderConfigForm(existing, urlCfg) {
 
       <p class="footnote">
         Tämä on harrasteprojekti kokeiluversiona. Pääsynhallinta perustuu
-        ryhmäkoodiin (jaettu salasana), ei käyttäjätileihin - älä käytä
+        liittymiskoodiin (jaettu salasana), ei käyttäjätileihin - älä käytä
         arkaluontoiseen tietoon.
       </p>
     </div>
@@ -151,8 +176,11 @@ function attachConfigFormHandlers(container, onSave) {
     const mapStyle = container.querySelector('input[name="cfg_mapStyle"]:checked')?.value || "osm";
     const autoStopRaw = parseInt(container.querySelector("#cfg_autoStop").value, 10);
     const autoStopMinutes = Number.isFinite(autoStopRaw) && autoStopRaw >= 0 ? autoStopRaw : 15;
+    const groupCode = container.querySelector("#cfg_group").value.trim();
+    const groupName = container.querySelector("#cfg_groupName").value.trim() || groupCode;
     const cfg = {
-      groupCode: container.querySelector("#cfg_group").value.trim(),
+      groupCode,
+      groupName,
       name: container.querySelector("#cfg_name").value.trim() || "Tuntematon",
       role,
       mapStyle,
@@ -165,7 +193,7 @@ function attachConfigFormHandlers(container, onSave) {
       }
     };
     if (!cfg.groupCode || !cfg.firebase.apiKey || !cfg.firebase.projectId) {
-      alert("Ryhmäkoodi, apiKey ja projectId ovat pakollisia.");
+      alert("Ryhmän nimi, apiKey ja projectId ovat pakollisia.");
       return;
     }
     saveConfig(cfg);
@@ -175,6 +203,7 @@ function attachConfigFormHandlers(container, onSave) {
   container.querySelector("#cfg_share").addEventListener("click", () => {
     const cfg = {
       groupCode: container.querySelector("#cfg_group").value.trim(),
+      groupName: container.querySelector("#cfg_groupName").value.trim(),
       firebase: {
         apiKey: container.querySelector("#cfg_apiKey").value.trim(),
         authDomain: container.querySelector("#cfg_authDomain").value.trim(),
@@ -183,7 +212,7 @@ function attachConfigFormHandlers(container, onSave) {
       }
     };
     if (!cfg.groupCode || !cfg.firebase.apiKey) {
-      alert("Täytä ryhmäkoodi ja Firebase-tiedot ennen linkin jakamista.");
+      alert("Täytä ryhmän nimi ja Firebase-tiedot ennen linkin jakamista.");
       return;
     }
     const link = buildShareLink(cfg);
@@ -196,6 +225,22 @@ function attachConfigFormHandlers(container, onSave) {
       statusEl.textContent = link;
     }
   });
+
+  // "Luo uusi ryhmä" - generoi uuden piilokoodin ja tyhjentää nimikentän,
+  // ilman että koko lomaketta tarvitsee renderöidä uudelleen.
+  const newGroupLink = container.querySelector("#cfg_new_group_link");
+  if (newGroupLink) {
+    newGroupLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      container.querySelector("#cfg_group").value = generateGroupCode();
+      const nameInput = container.querySelector("#cfg_groupName");
+      nameInput.value = "";
+      nameInput.placeholder = "esim. Syyshirvijahti";
+      nameInput.focus();
+      const hint = newGroupLink.closest("p");
+      if (hint) hint.textContent = "Uusi ryhmä luodaan tallennettaessa - jaa linkki tallennuksen jälkeen kutsuaksesi muut.";
+    });
+  }
 }
 
 function showOnboarding(existing, urlCfg, onSave) {
@@ -317,17 +362,17 @@ function addPauseButton() {
   if (btn) btn.addEventListener("click", togglePauseResume);
 }
 
-function setTopbar(role, groupCode) {
+function setTopbar(role, groupName) {
   const dot = document.getElementById("headerRoleDot");
   const text = document.getElementById("headerGroupText");
   if (dot) dot.style.background = role === "dog" ? "#f97316" : "#1b4332";
-  if (text) text.textContent = groupCode || "";
+  if (text) text.textContent = groupName || "";
 }
 
 function startPackTracker(cfg) {
   document.getElementById("app").style.display = "flex";
   initMap(cfg.mapStyle);
-  setTopbar(cfg.role, cfg.groupCode);
+  setTopbar(cfg.role, cfg.groupName || cfg.groupCode);
 
   firebase.initializeApp(cfg.firebase);
   const auth = firebase.auth();
@@ -553,7 +598,7 @@ function startListeningToGroup(db, cfg) {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v22";
+const APP_VERSION = "v23";
 
 function boot() {
   const versionEl = document.getElementById("appVersion");
@@ -565,6 +610,7 @@ function boot() {
   const merged = existing ? { ...existing } : {};
   if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
   if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
+  if (!merged.groupName && urlCfg.groupName) merged.groupName = urlCfg.groupName;
   if (!merged.role && urlCfg.role) merged.role = urlCfg.role;
   if (!merged.mapStyle) merged.mapStyle = urlCfg.mapStyle || "osm";
   if (merged.autoStopMinutes === undefined) merged.autoStopMinutes = urlCfg.autoStopMinutes ?? 15;
