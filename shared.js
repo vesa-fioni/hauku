@@ -335,9 +335,16 @@ function startSendingLocation(db, auth, cfg) {
   if (watchId !== null) navigator.geolocation.clearWatch(watchId);
   isSending = true;
 
+  const MIN_INTERVAL_MS = 10000; // päivitä Firestoreen korkeintaan kerran 10 sekunnissa
+  let lastWriteTime = 0;
+
   watchId = navigator.geolocation.watchPosition((pos) => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
+
+    const now = Date.now();
+    if (now - lastWriteTime < MIN_INTERVAL_MS) return; // liian aikaisin, ohitetaan
+    lastWriteTime = now;
 
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
