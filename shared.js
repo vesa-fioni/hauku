@@ -1,10 +1,10 @@
 // shared.js
-// Yhteinen logiikka koira- ja metsästäjäsivulle.
-// Sivu joka lataa tämän asettaa ensin globaalin muuttujan: window.PACK_ROLE = "dog" | "hunter"
+// Yksi sovellus: aloitusnäkymä kysyy ryhmäkoodin, nimen ja roolin (koira/metsästäjä).
+// Rooli on käyttäjän asetus (cfg.role), ei enää erillinen sivu.
 
-const CONFIG_KEY = "packtracker_config_v1";
+const CONFIG_KEY = "hauku_config_v1";
 
-// ---- 1. Config-lomake (Firebase-avaimet + ryhmäkoodi + nimi) ----
+// ---- Config: lataus, tallennus, URL-oletukset ----
 
 function loadConfig() {
   const raw = localStorage.getItem(CONFIG_KEY);
@@ -16,15 +16,17 @@ function saveConfig(cfg) {
   localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
 }
 
-// Lukee Firebase-avaimet ja ryhmäkoodin URL-parametreista, jos ne on annettu
-// esim. dog.html?group=HIRVI24&apiKey=...&authDomain=...&projectId=...&appId=...
-// Näin jaettu linkki voi sisältää kaiken paitsi käyttäjän oman nimen.
+// Lukee Firebase-avaimet, ryhmäkoodin ja (valinnaisesti) roolin URL-parametreista.
+// Esim. index.html?group=HIRVI24&apiKey=...&authDomain=...&projectId=...&appId=...&role=dog
 function getUrlConfig() {
   const p = new URLSearchParams(window.location.search);
   const result = {};
 
   const group = p.get("group");
   if (group) result.groupCode = group;
+
+  const role = p.get("role");
+  if (role === "dog" || role === "hunter") result.role = role;
 
   const fb = {};
   ["apiKey", "authDomain", "projectId", "appId"].forEach((key) => {
@@ -37,8 +39,7 @@ function getUrlConfig() {
 }
 
 function buildShareLink(cfg) {
-  const url = new URL(window.location.href);
-  url.search = ""; // siivoa vanhat parametrit
+  const url = new URL(window.location.origin + window.location.pathname);
   if (cfg.groupCode) url.searchParams.set("group", cfg.groupCode);
   if (cfg.firebase) {
     Object.entries(cfg.firebase).forEach(([k, v]) => {
@@ -48,7 +49,9 @@ function buildShareLink(cfg) {
   return url.toString();
 }
 
-function showConfigForm(existing, onSave, urlCfg) {
+// ---- Onboarding-/asetuslomake ----
+
+function renderConfigForm(existing, urlCfg) {
   urlCfg = urlCfg || {};
 
   const groupFromUrl = !!urlCfg.groupCode;
@@ -56,75 +59,83 @@ function showConfigForm(existing, onSave, urlCfg) {
 
   const groupValue = existing?.groupCode || urlCfg.groupCode || "";
   const fbValue = (key) => existing?.firebase?.[key] || urlCfg.firebase?.[key] || "";
+  const roleValue = existing?.role || urlCfg.role || "hunter";
 
-  const overlay = document.createElement("div");
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;" +
-    "display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto;";
-
-  const box = document.createElement("div");
-  box.style.cssText = "background:white;padding:20px;border-radius:10px;max-width:420px;width:100%;font-family:sans-serif;";
-
-  // Ryhmäkoodi-kenttä: jos se tuli linkistä, näytetään lukittuna tietona eikä muokattavana
   const groupField = groupFromUrl
-    ? `<p style="font-size:13px;margin-bottom:8px;">Ryhmä: <strong>${groupValue}</strong> (linkistä)</p>
+    ? `<p class="hint">Ryhmä: <strong>${groupValue}</strong> (linkistä)</p>
        <input type="hidden" id="cfg_group" value="${groupValue}">`
-    : `<label style="font-size:12px;">Ryhmäkoodi</label>
-       <input id="cfg_group" style="width:100%;margin-bottom:8px;padding:6px;" value="${groupValue}">`;
+    : `<label>Ryhmäkoodi</label>
+       <input id="cfg_group" placeholder="esim. HIRVI24" value="${groupValue}">`;
 
-  // Firebase-kentät: jos ne tulivat linkistä, piilotetaan kokonaan lomakkeesta
   const firebaseFields = firebaseFromUrl
-    ? `<p style="font-size:12px;color:#2563eb;margin-bottom:8px;">Firebase-yhteys jo asetettu linkin kautta ✓</p>
+    ? `<p class="hint hint-ok">Firebase-yhteys jo asetettu linkin kautta</p>
        <input type="hidden" id="cfg_apiKey" value="${fbValue("apiKey")}">
        <input type="hidden" id="cfg_authDomain" value="${fbValue("authDomain")}">
        <input type="hidden" id="cfg_projectId" value="${fbValue("projectId")}">
        <input type="hidden" id="cfg_appId" value="${fbValue("appId")}">`
-    : `<label style="font-size:12px;">Firebase apiKey</label>
-       <input id="cfg_apiKey" style="width:100%;margin-bottom:8px;padding:6px;" value="${fbValue("apiKey")}">
+    : `<label>Firebase apiKey</label>
+       <input id="cfg_apiKey" value="${fbValue("apiKey")}">
 
-       <label style="font-size:12px;">Firebase authDomain</label>
-       <input id="cfg_authDomain" style="width:100%;margin-bottom:8px;padding:6px;" value="${fbValue("authDomain")}">
+       <label>Firebase authDomain</label>
+       <input id="cfg_authDomain" value="${fbValue("authDomain")}">
 
-       <label style="font-size:12px;">Firebase projectId</label>
-       <input id="cfg_projectId" style="width:100%;margin-bottom:8px;padding:6px;" value="${fbValue("projectId")}">
+       <label>Firebase projectId</label>
+       <input id="cfg_projectId" value="${fbValue("projectId")}">
 
-       <label style="font-size:12px;">Firebase appId</label>
-       <input id="cfg_appId" style="width:100%;margin-bottom:12px;padding:6px;" value="${fbValue("appId")}">`;
+       <label>Firebase appId</label>
+       <input id="cfg_appId" value="${fbValue("appId")}">`;
 
-  box.innerHTML = `
-    <h2 style="margin-top:0;font-size:18px;">Asetukset</h2>
-    <p style="font-size:13px;color:#555;">
-      Nämä tallennetaan vain TÄHÄN selaimeen (localStorage), ei minnekään palvelimelle.
-    </p>
+  return `
+    <div class="onboard-card">
+      <img class="onboard-logo" src="logo.png?v=2" alt="Hauku">
+      <p class="onboard-tagline">Ryhmäpohjainen sijainninjako koiralle ja metsästäjille</p>
 
-    ${groupField}
+      <div class="form-block">
+        ${groupField}
 
-    <label style="font-size:12px;">Nimi (esim. Rekku tai Matti)</label>
-    <input id="cfg_name" style="width:100%;margin-bottom:8px;padding:6px;" value="${existing?.name || ""}">
+        <label>Nimi</label>
+        <input id="cfg_name" placeholder="esim. Rekku tai Matti" value="${existing?.name || ""}">
 
-    ${firebaseFields}
+        <label>Rooli</label>
+        <div class="role-toggle">
+          <label class="role-option">
+            <input type="radio" name="cfg_role" value="dog" ${roleValue === "dog" ? "checked" : ""}>
+            Koira
+          </label>
+          <label class="role-option">
+            <input type="radio" name="cfg_role" value="hunter" ${roleValue === "hunter" ? "checked" : ""}>
+            Metsästäjä
+          </label>
+        </div>
 
-    <button id="cfg_save" style="width:100%;padding:10px;background:#2563eb;color:white;border:none;border-radius:6px;font-size:15px;">
-      Tallenna ja aloita
-    </button>
+        ${firebaseFields}
 
-    <button id="cfg_share" style="width:100%;padding:10px;margin-top:8px;background:#f3f4f6;color:#222;border:1px solid #ccc;border-radius:6px;font-size:13px;">
-      Kopioi jakolinkki
-    </button>
-    <p id="cfg_share_status" style="font-size:12px;color:#16a34a;text-align:center;margin:6px 0 0;"></p>
+        <button id="cfg_save" class="btn btn-primary">Tallenna ja aloita</button>
+        <button id="cfg_share" class="btn btn-secondary">Kopioi jakolinkki</button>
+        <p id="cfg_share_status" class="hint hint-ok"></p>
+      </div>
+
+      <p class="footnote">
+        Tämä on harrasteprojekti kokeiluversiona. Pääsynhallinta perustuu
+        ryhmäkoodiin (jaettu salasana), ei käyttäjätileihin - älä käytä
+        arkaluontoiseen tietoon.
+      </p>
+    </div>
   `;
+}
 
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-
-  box.querySelector("#cfg_save").addEventListener("click", () => {
+function attachConfigFormHandlers(container, onSave) {
+  container.querySelector("#cfg_save").addEventListener("click", () => {
+    const role = container.querySelector('input[name="cfg_role"]:checked')?.value || "hunter";
     const cfg = {
-      groupCode: box.querySelector("#cfg_group").value.trim(),
-      name: box.querySelector("#cfg_name").value.trim() || "Tuntematon",
+      groupCode: container.querySelector("#cfg_group").value.trim(),
+      name: container.querySelector("#cfg_name").value.trim() || "Tuntematon",
+      role,
       firebase: {
-        apiKey: box.querySelector("#cfg_apiKey").value.trim(),
-        authDomain: box.querySelector("#cfg_authDomain").value.trim(),
-        projectId: box.querySelector("#cfg_projectId").value.trim(),
-        appId: box.querySelector("#cfg_appId").value.trim(),
+        apiKey: container.querySelector("#cfg_apiKey").value.trim(),
+        authDomain: container.querySelector("#cfg_authDomain").value.trim(),
+        projectId: container.querySelector("#cfg_projectId").value.trim(),
+        appId: container.querySelector("#cfg_appId").value.trim(),
       }
     };
     if (!cfg.groupCode || !cfg.firebase.apiKey || !cfg.firebase.projectId) {
@@ -132,18 +143,17 @@ function showConfigForm(existing, onSave, urlCfg) {
       return;
     }
     saveConfig(cfg);
-    document.body.removeChild(overlay);
     onSave(cfg);
   });
 
-  box.querySelector("#cfg_share").addEventListener("click", () => {
+  container.querySelector("#cfg_share").addEventListener("click", () => {
     const cfg = {
-      groupCode: box.querySelector("#cfg_group").value.trim(),
+      groupCode: container.querySelector("#cfg_group").value.trim(),
       firebase: {
-        apiKey: box.querySelector("#cfg_apiKey").value.trim(),
-        authDomain: box.querySelector("#cfg_authDomain").value.trim(),
-        projectId: box.querySelector("#cfg_projectId").value.trim(),
-        appId: box.querySelector("#cfg_appId").value.trim(),
+        apiKey: container.querySelector("#cfg_apiKey").value.trim(),
+        authDomain: container.querySelector("#cfg_authDomain").value.trim(),
+        projectId: container.querySelector("#cfg_projectId").value.trim(),
+        appId: container.querySelector("#cfg_appId").value.trim(),
       }
     };
     if (!cfg.groupCode || !cfg.firebase.apiKey) {
@@ -151,36 +161,54 @@ function showConfigForm(existing, onSave, urlCfg) {
       return;
     }
     const link = buildShareLink(cfg);
-    const statusEl = box.querySelector("#cfg_share_status");
-
+    const statusEl = container.querySelector("#cfg_share_status");
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(link).then(() => {
         statusEl.textContent = "Linkki kopioitu leikepöydälle!";
-      }).catch(() => {
-        statusEl.textContent = link; // fallback: näytä linkki tekstinä
-      });
+      }).catch(() => { statusEl.textContent = link; });
     } else {
       statusEl.textContent = link;
     }
   });
 }
 
-// Pieni "Muuta asetuksia" -nappi, aina näkyvissä
-function addSettingsButton(onReset) {
+function showOnboarding(existing, urlCfg, onSave) {
+  const el = document.getElementById("onboarding");
+  el.innerHTML = renderConfigForm(existing, urlCfg);
+  el.style.display = "flex";
+  attachConfigFormHandlers(el, (cfg) => {
+    el.style.display = "none";
+    onSave(cfg);
+  });
+}
+
+function showSettingsOverlay(onSave) {
+  const overlay = document.createElement("div");
+  overlay.id = "settingsOverlay";
+  overlay.className = "overlay";
+  overlay.innerHTML = renderConfigForm(loadConfig(), {});
+  document.body.appendChild(overlay);
+  attachConfigFormHandlers(overlay, (cfg) => {
+    document.body.removeChild(overlay);
+    onSave(cfg);
+  });
+}
+
+function addSettingsButton(onReopen) {
   const btn = document.createElement("button");
+  btn.id = "settingsBtn";
   btn.textContent = "Asetukset";
-  btn.style.cssText = "position:fixed;bottom:8px;right:8px;z-index:1000;padding:8px 12px;" +
-    "background:#fff;border:1px solid #ccc;border-radius:6px;font-family:sans-serif;font-size:12px;";
-  btn.addEventListener("click", onReset);
+  btn.addEventListener("click", onReopen);
   document.body.appendChild(btn);
 }
 
-// ---- 2. Firebase + sijainnin lähetys + kartan piirto ----
+// ---- Kartta + Firebase ----
 
 let map, markers = {}, trails = {}, firstFix = true;
 let watchId = null;
 
 function initMap() {
+  if (map) return;
   map = L.map("map").setView([61.9241, 25.7482], 13);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "&copy; OpenStreetMap contributors"
@@ -188,7 +216,7 @@ function initMap() {
 }
 
 function iconFor(role) {
-  const color = role === "dog" ? "orange" : "blue";
+  const color = role === "dog" ? "#f97316" : "#1b4332";
   return L.divIcon({
     className: "",
     html: `<div style="background:${color};width:16px;height:16px;border-radius:50%;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.5);"></div>`,
@@ -201,7 +229,18 @@ function setStatus(text) {
   if (el) el.textContent = text;
 }
 
+function setTopbar(role) {
+  const el = document.getElementById("topbar");
+  if (!el) return;
+  el.textContent = role === "dog" ? "Koiramoodi" : "Metsästäjämoodi";
+  el.className = role === "dog" ? "topbar topbar-dog" : "topbar topbar-hunter";
+}
+
 function startPackTracker(cfg) {
+  document.getElementById("app").style.display = "block";
+  initMap();
+  setTopbar(cfg.role);
+
   firebase.initializeApp(cfg.firebase);
   const auth = firebase.auth();
   const db = firebase.firestore();
@@ -222,6 +261,7 @@ function startSendingLocation(db, auth, cfg) {
     setStatus("Selain ei tue sijaintia.");
     return;
   }
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
 
   watchId = navigator.geolocation.watchPosition((pos) => {
     const uid = auth.currentUser?.uid;
@@ -236,7 +276,7 @@ function startSendingLocation(db, auth, cfg) {
     memberRef.set({
       lat, lng,
       accuracy: pos.coords.accuracy,
-      role: window.PACK_ROLE,
+      role: cfg.role,
       name: cfg.name,
       updatedAt: firebase.firestore.Timestamp.now()
     }, { merge: true });
@@ -287,7 +327,7 @@ function startListeningToGroup(db, cfg) {
       snapshot.docs.forEach((doc) => {
         const uid = doc.id;
         if (trails[uid]) return;
-        trails[uid] = L.polyline([], { color: doc.data().role === "dog" ? "orange" : "blue", weight: 3 }).addTo(map);
+        trails[uid] = L.polyline([], { color: doc.data().role === "dog" ? "#f97316" : "#1b4332", weight: 3 }).addTo(map);
 
         db.collection("groups").doc(cfg.groupCode).collection("members").doc(uid)
           .collection("track").orderBy("timestamp").limitToLast(500)
@@ -298,40 +338,31 @@ function startListeningToGroup(db, cfg) {
     });
 }
 
-// ---- 3. Käynnistys ----
+// ---- Käynnistys ----
 
 function boot() {
-  initMap();
-
   const urlCfg = getUrlConfig();
   const existing = loadConfig();
 
-  // Yhdistä: olemassa oleva tallennettu config + linkistä tulleet oletukset.
-  // Tallennettua configia ei ylikirjoiteta linkillä, jos käyttäjä on jo asettanut
-  // oman Firebase-projektinsa aiemmin (esim. projektin omistaja itse).
   const merged = existing ? { ...existing } : {};
   if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
   if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
+  if (!merged.role && urlCfg.role) merged.role = urlCfg.role;
 
   const hasFirebase = merged.firebase && merged.firebase.apiKey && merged.firebase.projectId;
   const hasGroup = !!merged.groupCode;
   const hasName = !!merged.name;
+  const hasRole = !!merged.role;
 
   addSettingsButton(() => {
-    showConfigForm(loadConfig(), (cfg) => {
-      if (watchId) navigator.geolocation.clearWatch(watchId);
-      startPackTracker(cfg);
-    }, urlCfg);
+    showSettingsOverlay((cfg) => startPackTracker(cfg));
   });
 
-  if (hasFirebase && hasGroup && hasName) {
+  if (hasFirebase && hasGroup && hasName && hasRole) {
     saveConfig(merged);
     startPackTracker(merged);
   } else {
-    showConfigForm(merged, (cfg) => {
-      saveConfig(cfg);
-      startPackTracker(cfg);
-    }, urlCfg);
+    showOnboarding(merged, urlCfg, (cfg) => startPackTracker(cfg));
   }
 }
 
