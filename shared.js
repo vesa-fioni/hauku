@@ -344,7 +344,7 @@ function setMapStyle(style) {
 }
 
 function iconFor(role, alertActive) {
-  const SIZE = 46;
+  const SIZE = 37; // 80% aiemmasta 46px:stä
   // Omat brändi-ikonit (koira/ihminen) - väritetty roolin mukaisesti
   // (koira=oranssi, ihminen=vihreä, ks. whitepaper kohta 12).
   // Cache-bustataan samaan tapaan kuin muutkin kuva-assetit (logo.png?v=N).
@@ -672,7 +672,7 @@ function startListeningToGroup(db, cfg) {
             .bindTooltip(tooltipText, {
               permanent: true,
               direction: "top",
-              offset: [0, -28],
+              offset: [0, -22],
               className: "marker-label"
             });
         }
@@ -861,7 +861,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v34";
+const APP_VERSION = "v35";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
