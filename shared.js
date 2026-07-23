@@ -337,6 +337,16 @@ function startPackTracker(cfg) {
   });
 }
 
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // maapallon säde metreinä
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function startSendingLocation(db, auth, cfg) {
   if (!("geolocation" in navigator)) {
     setStatus("Selain ei tue sijaintia.");
@@ -360,6 +370,14 @@ function startSendingLocation(db, auth, cfg) {
 
   const MIN_INTERVAL_MS = 10000; // päivitä Firestoreen korkeintaan kerran 10 sekunnissa
   let lastWriteTime = 0;
+  let lastGoodFix = null; // { lat, lng, time } - viimeisin hyväksytty sijainti hyppysuodatinta varten
+  let consecutiveRejects = 0;
+
+  // Jos laskettu nopeus edelliseen hyväksyttyyn pisteeseen on tätä suurempi, pistettä pidetään
+  // GPS-häiriönä ("teleporttauksena") ja se hylätään. 55 m/s ≈ 200 km/h - sallii myös autokyydin,
+  // mutta suodattaa selvät GPS-virhepiikit.
+  const MAX_PLAUSIBLE_SPEED_MPS = 55;
+  const MAX_CONSECUTIVE_REJECTS = 3; // useampi samankaltainen "hyppy" peräkkäin = oikeasti liikuttu
 
   watchId = navigator.geolocation.watchPosition((pos) => {
     const uid = auth.currentUser?.uid;
@@ -371,6 +389,24 @@ function startSendingLocation(db, auth, cfg) {
 
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
+
+    if (lastGoodFix) {
+      const distance = haversineMeters(lastGoodFix.lat, lastGoodFix.lng, lat, lng);
+      const elapsedSec = (now - lastGoodFix.time) / 1000;
+      const speed = elapsedSec > 0 ? distance / elapsedSec : 0;
+
+      // Pieni etäisyys ohitetaan aina suodattimesta (GPS-huojunta paikallaan ollessa
+      // voi muuten laskea keinotekoisen suuren nopeuden hyvin lyhyellä aikavälillä).
+      const looksLikeError = distance > 50 && speed > MAX_PLAUSIBLE_SPEED_MPS;
+
+      if (looksLikeError && consecutiveRejects < MAX_CONSECUTIVE_REJECTS) {
+        consecutiveRejects++;
+        setStatus("Ohitettu epärealistinen GPS-hyppy (" + Math.round(speed * 3.6) + " km/h)");
+        return;
+      }
+    }
+    consecutiveRejects = 0;
+    lastGoodFix = { lat, lng, time: now };
 
     const memberRef = db.collection("groups").doc(cfg.groupCode)
       .collection("members").doc(uid);
@@ -464,7 +500,7 @@ function startListeningToGroup(db, cfg) {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v19";
+const APP_VERSION = "v20";
 
 function boot() {
   const versionEl = document.getElementById("appVersion");
