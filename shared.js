@@ -93,7 +93,7 @@ function renderConfigForm(existing, urlCfg) {
   return `
     <div class="onboard-card">
       <img class="onboard-logo" src="logo.png?v=2" alt="Hauku">
-      <p class="onboard-tagline">Ryhmäpohjainen sijainninjako koiralle ja metsästäjille</p>
+      <p class="onboard-tagline">Ryhmäpohjainen sijainninjako koirille ja ihmisille</p>
 
       <div class="form-block">
         ${groupField}
@@ -109,7 +109,7 @@ function renderConfigForm(existing, urlCfg) {
           </label>
           <label class="role-option">
             <input type="radio" name="cfg_role" value="hunter" ${roleValue === "hunter" ? "checked" : ""}>
-            Metsästäjä
+            Ihminen
           </label>
         </div>
 
@@ -417,7 +417,7 @@ function startListeningToGroup(db, cfg) {
 
         const latlng = [data.lat, data.lng];
         const name = data.name || "Tuntematon";
-        const label = `${name} (${data.role === "dog" ? "koira" : "metsästäjä"})`;
+        const label = `${name} (${data.role === "dog" ? "koira" : "ihminen"})`;
 
         if (change.type === "removed") {
           if (markers[uid]) { map.removeLayer(markers[uid]); delete markers[uid]; }
@@ -464,7 +464,7 @@ function startListeningToGroup(db, cfg) {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v16";
+const APP_VERSION = "v18";
 
 function boot() {
   const versionEl = document.getElementById("appVersion");
