@@ -373,6 +373,11 @@ function addSettingsButton(onReopen) {
 // ---- Kartta + Firebase ----
 
 let map, tileLayer, markers = {}, trails = {}, firstFix = true;
+// Varaventtiili: jos oma sijainti ei ehdi ensimmäisenä (esim. GPS-lupa vielä
+// kesken), sallitaan zoomaus kenen tahansa ensimmäiseen sijaintiin muutaman
+// sekunnin jälkeen - ettei kartta jää jumiin oletusnäkymään. Ks.
+// startListeningToGroup.
+let fallbackZoomAllowed = false;
 let watchId = null;
 
 const MAP_STYLES = {
@@ -393,8 +398,44 @@ function initMap(style) {
   if (!map) {
     map = L.map("map", { zoomControl: false }).setView([61.9241, 25.7482], 13);
     L.control.zoom({ position: "bottomleft" }).addTo(map);
+    addLocateControl();
   }
   setMapStyle(style || "osm");
+}
+
+// "Keskitä minuun" -nappi (bottomright, ei törmää zoom-kontrolliin
+// bottomleftissä). Nojaa tuttuun kartta-appien konventioon (paikannuskuvake)
+// sen sijaan että kartalla lukisi mitään - ks. keskustelu 24.7.2026: visuaalinen
+// "tässä sinä olet" -korostus koettiin liian tökeräksi, tämä ja ensimmäisen
+// zoomin kohdistaminen omaan sijaintiin (ks. startListeningToGroup) valittiin
+// sen sijaan.
+function addLocateControl() {
+  const LocateControl = L.Control.extend({
+    options: { position: "bottomright" },
+    onAdd: function () {
+      const container = L.DomUtil.create("div", "leaflet-bar leaflet-control locate-control");
+      const link = L.DomUtil.create("a", "", container);
+      link.href = "#";
+      link.title = "Keskitä minuun";
+      link.innerHTML = "&#9678;"; // ◎
+      L.DomEvent.on(link, "click", (e) => {
+        L.DomEvent.stop(e);
+        centerOnSelf();
+      });
+      return container;
+    }
+  });
+  new LocateControl().addTo(map);
+}
+
+function centerOnSelf() {
+  const uid = currentAuth?.currentUser?.uid;
+  const marker = uid && markers[uid];
+  if (marker) {
+    map.setView(marker.getLatLng(), Math.max(map.getZoom(), 15));
+  } else {
+    setStatus("Omaa sijaintia ei ole vielä saatavilla");
+  }
 }
 
 function setMapStyle(style) {
@@ -806,6 +847,11 @@ function startFreshnessTicker() {
 function startListeningToGroup(db, cfg) {
   startFreshnessTicker();
 
+  // Jos oma sijainti ei ole vielä saapunut 4 sekunnin kuluttua (esim.
+  // GPS-lupadialogi vielä kesken), sallitaan zoomaus kenen tahansa
+  // ensimmäiseen sijaintiin - ks. fallbackZoomAllowed-kommentti yllä.
+  setTimeout(() => { fallbackZoomAllowed = true; }, 4000);
+
   db.collection("groups").doc(cfg.groupCode).collection("members")
     .onSnapshot((snapshot) => {
       snapshot.docChanges().forEach((change) => {
@@ -872,7 +918,14 @@ function startListeningToGroup(db, cfg) {
           }, Math.max(remaining, 0));
         }
 
-        if (firstFix) { map.setView(latlng, 15); firstFix = false; }
+        // Ensimmäinen zoom kohdistetaan omaan sijaintiin (ei kenen tahansa
+        // ensimmäiseen) - ks. keskustelu 24.7.2026. fallbackZoomAllowed
+        // varmistaa ettei kartta jää jumiin jos oma sijainti viipyy.
+        const isSelfFix = currentAuth?.currentUser?.uid === uid;
+        if (firstFix && (isSelfFix || fallbackZoomAllowed)) {
+          map.setView(latlng, 15);
+          firstFix = false;
+        }
       });
     }, err => setStatus("Virhe kuunnellessa ryhmää: " + err.message));
 
