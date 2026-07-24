@@ -1165,13 +1165,14 @@ function toggleSelfMeasurement(uid) {
 // jäsenen popupista "Valitse tämä pisteeksi" (täydentää parin). Sama nappi
 // toimii myös perumiseen (jos painetaan uudelleen kesken valinnan) ja
 // olemassa olevan mittauksen lopettamiseen (jos pari on jo mitattu).
+// Huom: ei käytetä setStatus():ia tässä - se kirjoittaisi GPS-lähetyksen
+// tilarivin päälle. Napin oma teksti ("Peruuta valinta" / "Valitse tämä
+// pisteeksi") riittää kertomaan tilan.
 function handlePairMeasureClick(uid) {
   if (pendingMeasureFrom === uid) {
     pendingMeasureFrom = null;
-    setStatus("Mittauksen valinta peruttu.");
   } else if (pendingMeasureFrom === null) {
     pendingMeasureFrom = uid;
-    setStatus('Valitse toinen jäsen ja napauta sen popupista "Valitse tämä pisteeksi".');
   } else {
     const fromUid = pendingMeasureFrom;
     pendingMeasureFrom = null;
@@ -1322,7 +1323,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v43";
+const APP_VERSION = "v44";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
