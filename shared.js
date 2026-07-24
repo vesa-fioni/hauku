@@ -780,10 +780,19 @@ let alertTimers = {};    // uid -> timeoutId (visuaalisen renkaan sammutus)
 let lastAlertSeen = {};  // uid -> alertAt (ms) - viimeksi reagoitu hälytysaikaleima
 let memberData = {};     // uid -> viimeisin Firestore-data, popupin ja vanhentumislaskennan pohjaksi
 
-// uid -> { line: L.Polyline, labelMarker: L.Marker } - jäsenet joille etäisyysmittaus
-// on käynnissä. Ks. hauku-etaisyysmittaus-valmistusohje.md. Puhtaasti näyttöpuolen
+// pairKey(uidA,uidB) -> { a, b, line: L.Polyline, labelMarker: L.Marker } -
+// käynnissä olevat etäisyysmittaukset. Alun perin vain "minusta jäseneen",
+// yleistetty tukemaan mielivaltaista kahden jäsenen väliä (ks.
+// hauku-etaisyysmittaus-valmistusohje.md, vaihe 2). Puhtaasti näyttöpuolen
 // tila - ei Firestore-kirjoitusta, hyödyntää jo olemassa olevaa markers-dataa.
 let activeMeasurements = {};
+
+// Kun tämä on asetettu jäsenen uid:ksi, ollaan "Mittaa toiseen jäseneen"
+// -valinnan kesken: seuraava toisen jäsenen popupista painettu "Valitse tämä
+// pisteeksi" -nappi täydentää parin. Vain yksi valinta voi olla kesken
+// kerrallaan koko sovelluksessa - yksinkertaisin malli, riittää tähän
+// käyttötarkoitukseen.
+let pendingMeasureFrom = null;
 
 // Kynnys, jonka jälkeen merkki himmennetään merkiksi vanhentuneesta datasta
 // (esim. koira taustalla / ruutu sammunut, ks. whitepaper kohta 14.1). Ei
@@ -847,11 +856,28 @@ function buildPopupHtml(uid) {
   // aina nolla) ja sekoittaa sen sijaan mikä merkeistä on "minä" - piilotetaan
   // siksi kokonaan omalta popupilta.
   if (!isSelf) {
-    const measuring = isMeasuring(uid);
+    const measuring = isMeasuringPair(currentAuth?.currentUser?.uid, uid);
     const measureLabel = measuring ? "Lopeta mittaus" : "Etäisyys minuun";
     const measureClass = measuring ? "popup-btn popup-btn-active" : "popup-btn";
     actionButtons.push(`<button type="button" class="${measureClass}" data-action="measure">${measureLabel}</button>`);
   }
+
+  // Kahden mielivaltaisen jäsenen välinen mittaus (vaihe 2, ks.
+  // hauku-etaisyysmittaus-valmistusohje.md) - näkyy kaikilla jäsenillä,
+  // myös omalla merkillä, koska tässä ei mitata etäisyyttä itseensä vaan
+  // valitaan molemmat päätepisteet erikseen kahdessa vaiheessa.
+  let pairLabel, pairClass;
+  if (pendingMeasureFrom === uid) {
+    pairLabel = "Peruuta valinta";
+    pairClass = "popup-btn popup-btn-active";
+  } else if (pendingMeasureFrom === null) {
+    pairLabel = "Mittaa toiseen jäseneen";
+    pairClass = "popup-btn";
+  } else {
+    pairLabel = "Valitse tämä pisteeksi";
+    pairClass = "popup-btn popup-btn-active";
+  }
+  actionButtons.push(`<button type="button" class="${pairClass}" data-action="pair">${pairLabel}</button>`);
 
   if (actionButtons.length > 0) {
     html += `<div class="popup-actions">${actionButtons.join("")}</div>`;
@@ -897,9 +923,12 @@ function startListeningToGroup(db, cfg) {
           if (alertTimers[uid]) { clearTimeout(alertTimers[uid]); delete alertTimers[uid]; }
           delete lastAlertSeen[uid];
           delete memberData[uid];
-          // Jäsen poistui - mahdollinen kesken ollut mittaus kyseiseen jäseneen
-          // pitää siivota, ettei kartalle jää "orpoa" viivaa osoittamaan tyhjää.
-          stopMeasurement(uid);
+          // Jäsen poistui - mahdolliset kesken olleet mittaukset (kumpaankin
+          // suuntaan) pitää siivota, ettei kartalle jää "orpoa" viivaa
+          // osoittamaan tyhjää. Jos jäsen oli juuri pending-valinnan
+          // ensimmäinen piste, myös se pitää nollata.
+          stopAllMeasurementsInvolving(uid);
+          if (pendingMeasureFrom === uid) pendingMeasureFrom = null;
           return;
         }
 
@@ -928,12 +957,14 @@ function startListeningToGroup(db, cfg) {
               className: "marker-label"
             })
             // Popupin sisältö rakennetaan funktiona (buildPopupHtml), joten
-            // toimintorivin nappi pitää sitoa aina kun popup avataan uudelleen -
+            // toimintorivin napit pitää sitoa aina kun popup avataan uudelleen -
             // sama käsittelijä pysyy voimassa koko merkin elinkaaren ajan.
             .on("popupopen", (e) => {
               const el = e.popup.getElement();
-              const btn = el && el.querySelector('.popup-btn[data-action="measure"]');
-              if (btn) btn.addEventListener("click", () => toggleMeasurement(uid));
+              const measureBtn = el && el.querySelector('.popup-btn[data-action="measure"]');
+              if (measureBtn) measureBtn.addEventListener("click", () => toggleSelfMeasurement(uid));
+              const pairBtn = el && el.querySelector('.popup-btn[data-action="pair"]');
+              if (pairBtn) pairBtn.addEventListener("click", () => handlePairMeasureClick(uid));
             });
         }
 
@@ -1013,29 +1044,33 @@ function midpoint(latlng1, latlng2) {
   return [(latlng1.lat + latlng2.lat) / 2, (latlng1.lng + latlng2.lng) / 2];
 }
 
-function isMeasuring(uid) {
-  return !!activeMeasurements[uid];
+function pairKey(uidA, uidB) {
+  return [uidA, uidB].sort().join("__");
+}
+
+function isMeasuringPair(uidA, uidB) {
+  if (!uidA || !uidB || uidA === uidB) return false;
+  return !!activeMeasurements[pairKey(uidA, uidB)];
 }
 
 // Viiva: katkoviiva, lähes läpinäkyvä, neutraali väri (ei koira/ihminen-
 // brändiväri, ettei sekoitu rooliväritykseen) - antaa visuaalisen
 // kontekstin sille mitä lukema tarkoittaa, ks. valmistusohjeen kohta 4.
-function startMeasurement(uid) {
-  const selfUid = currentAuth?.currentUser?.uid;
-  if (!selfUid || !markers[selfUid]) {
-    setStatus("Omaa sijaintia ei ole vielä saatavilla mittausta varten.");
-    return;
-  }
-  if (uid === selfUid) return; // etäisyys itseensä ei ole mielekäs - ks. buildPopupHtml
-  if (!markers[uid] || activeMeasurements[uid]) return;
+// Yleinen kahden mielivaltaisen jäsenen välinen mittaus - "Etäisyys minuun"
+// on tämän erikoistapaus jossa toinen päätepiste on aina oma sijainti.
+function startMeasurementBetween(uidA, uidB) {
+  if (!uidA || !uidB || uidA === uidB) return;
+  if (!markers[uidA] || !markers[uidB]) return;
+  const key = pairKey(uidA, uidB);
+  if (activeMeasurements[key]) return;
 
   const line = L.polyline(
-    [markers[selfUid].getLatLng(), markers[uid].getLatLng()],
+    [markers[uidA].getLatLng(), markers[uidB].getLatLng()],
     { color: "#444444", weight: 2, opacity: 0.35, dashArray: "6,8" }
   ).addTo(map);
 
   const labelMarker = L.marker(
-    midpoint(markers[selfUid].getLatLng(), markers[uid].getLatLng()),
+    midpoint(markers[uidA].getLatLng(), markers[uidB].getLatLng()),
     {
       icon: L.divIcon({
         className: "",
@@ -1047,59 +1082,107 @@ function startMeasurement(uid) {
     }
   ).addTo(map);
 
-  activeMeasurements[uid] = { line, labelMarker };
-  updateMeasurement(uid);
+  activeMeasurements[key] = { a: uidA, b: uidB, line, labelMarker };
+  updateMeasurementByKey(key);
 }
 
-// Kutsutaan aina kun jonkun jäsenen sijainti päivittyy (oma tai kohde) -
-// ks. startListeningToGroup. Näin viiva ja lukema pysyvät ajan tasalla
-// ilman erillistä ajastinta.
-function updateMeasurement(uid) {
-  const m = activeMeasurements[uid];
+// Kutsutaan aina kun jonkun jäsenen sijainti päivittyy - ks.
+// startListeningToGroup. Näin viiva ja lukema pysyvät ajan tasalla ilman
+// erillistä ajastinta. Toimii kummankin päätepisteen suhteen, ei vain omaan
+// sijaintiin sidottuna.
+function updateMeasurementByKey(key) {
+  const m = activeMeasurements[key];
   if (!m) return;
-  const selfUid = currentAuth?.currentUser?.uid;
-  if (!selfUid || !markers[selfUid] || !markers[uid]) {
-    stopMeasurement(uid);
+  if (!markers[m.a] || !markers[m.b]) {
+    stopMeasurementByKey(key);
     return;
   }
-  const selfLatLng = markers[selfUid].getLatLng();
-  const targetLatLng = markers[uid].getLatLng();
-  m.line.setLatLngs([selfLatLng, targetLatLng]);
-  m.labelMarker.setLatLng(midpoint(selfLatLng, targetLatLng));
+  const aLatLng = markers[m.a].getLatLng();
+  const bLatLng = markers[m.b].getLatLng();
+  m.line.setLatLngs([aLatLng, bLatLng]);
+  m.labelMarker.setLatLng(midpoint(aLatLng, bLatLng));
 
-  const meters = haversineMeters(selfLatLng.lat, selfLatLng.lng, targetLatLng.lat, targetLatLng.lng);
+  const meters = haversineMeters(aLatLng.lat, aLatLng.lng, bLatLng.lat, bLatLng.lng);
   const el = m.labelMarker.getElement();
   const inner = el && el.querySelector(".distance-label");
   if (inner) inner.textContent = formatDistance(meters);
 }
 
 function updateAllActiveMeasurements() {
-  Object.keys(activeMeasurements).forEach(updateMeasurement);
+  Object.keys(activeMeasurements).forEach(updateMeasurementByKey);
 }
 
-function stopMeasurement(uid) {
-  const m = activeMeasurements[uid];
+function stopMeasurementByKey(key) {
+  const m = activeMeasurements[key];
   if (!m) return;
   map.removeLayer(m.line);
   map.removeLayer(m.labelMarker);
-  delete activeMeasurements[uid];
+  delete activeMeasurements[key];
 }
 
-// Useampi mittaus voi olla käynnissä yhtä aikaa eri jäsenille - toggle
-// koskee vain sitä yhtä jäsentä jonka popupista nappia painettiin.
-function toggleMeasurement(uid) {
-  if (isMeasuring(uid)) {
-    stopMeasurement(uid);
-  } else {
-    startMeasurement(uid);
-  }
-  // Jos popup on auki, suljetaan ja avataan heti uudelleen - bindPopup on
-  // funktiopohjainen (buildPopupHtml(uid)), joten tämä hakee tuoreen
-  // sisällön ja napin tekstin ilman erillistä DOM-päivityslogiikkaa.
+function stopMeasurementBetween(uidA, uidB) {
+  stopMeasurementByKey(pairKey(uidA, uidB));
+}
+
+// Kaikki jäseneen uid liittyvät mittaukset (kumpikin päätepiste voi olla
+// tämä jäsen) - käytetään kun jäsen poistuu ryhmästä, ettei kartalle jää
+// "orpoja" viivoja osoittamaan tyhjää.
+function stopAllMeasurementsInvolving(uid) {
+  Object.keys(activeMeasurements).forEach((key) => {
+    const m = activeMeasurements[key];
+    if (m.a === uid || m.b === uid) stopMeasurementByKey(key);
+  });
+}
+
+function reopenPopupIfOpen(uid) {
   const marker = markers[uid];
   if (marker && marker.isPopupOpen()) {
     marker.closePopup().openPopup();
   }
+}
+
+// "Etäisyys minuun" -nappi: pikakutsu yleiseen pari-mittaukseen, jossa
+// toinen päätepiste on aina oma sijainti.
+function toggleSelfMeasurement(uid) {
+  const selfUid = currentAuth?.currentUser?.uid;
+  if (!selfUid || !markers[selfUid]) {
+    setStatus("Omaa sijaintia ei ole vielä saatavilla mittausta varten.");
+    return;
+  }
+  if (uid === selfUid) return; // etäisyys itseensä ei ole mielekäs - ks. buildPopupHtml
+  if (isMeasuringPair(selfUid, uid)) {
+    stopMeasurementBetween(selfUid, uid);
+  } else {
+    startMeasurementBetween(selfUid, uid);
+  }
+  reopenPopupIfOpen(uid);
+}
+
+// Kahden mielivaltaisen jäsenen välinen mittaus (vaihe 2, ks.
+// hauku-etaisyysmittaus-valmistusohje.md). Valinta tehdään kahdessa
+// vaiheessa popupin kautta: ensin painetaan "Mittaa toiseen jäseneen"
+// jommankumman jäsenen popupista (asettaa pending-tilan), sitten toisen
+// jäsenen popupista "Valitse tämä pisteeksi" (täydentää parin). Sama nappi
+// toimii myös perumiseen (jos painetaan uudelleen kesken valinnan) ja
+// olemassa olevan mittauksen lopettamiseen (jos pari on jo mitattu).
+function handlePairMeasureClick(uid) {
+  if (pendingMeasureFrom === uid) {
+    pendingMeasureFrom = null;
+    setStatus("Mittauksen valinta peruttu.");
+  } else if (pendingMeasureFrom === null) {
+    pendingMeasureFrom = uid;
+    setStatus('Valitse toinen jäsen ja napauta sen popupista "Valitse tämä pisteeksi".');
+  } else {
+    const fromUid = pendingMeasureFrom;
+    pendingMeasureFrom = null;
+    if (isMeasuringPair(fromUid, uid)) {
+      stopMeasurementBetween(fromUid, uid);
+    } else {
+      startMeasurementBetween(fromUid, uid);
+    }
+    reopenPopupIfOpen(fromUid);
+  }
+  reopenPopupIfOpen(uid);
 }
 
 // ---- Haukkuhälytys (vaihe 1: äänenvoimakkuustunnistus) ----
@@ -1239,7 +1322,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v42";
+const APP_VERSION = "v43";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan

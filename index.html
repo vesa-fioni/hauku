@@ -229,19 +229,22 @@
   .popup-info strong { font-size: 14px; }
 
   /* Popupin toimintorivi (ks. hauku-etaisyysmittaus-valmistusohje.md) -
-     rakenteellisesti valmis useammalle toiminnolle myöhemmin, vaiheessa 1
-     vain "Etäisyys minuun" -nappi. */
+     rakenteellisesti valmis useammalle toiminnolle. Napit pinotaan allekkain
+     (flex-column + gap), koska yhdellä jäsenellä voi olla useampi toiminto
+     yhtä aikaa näkyvissä (esim. "Etäisyys minuun" ja "Mittaa toiseen
+     jäseneen"). */
   .popup-actions {
     margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;
+    display: flex; flex-direction: column; gap: 6px;
   }
   .popup-btn {
     width: 100%; padding: 8px; border: none; border-radius: 6px;
     background: var(--forest); color: white;
     font-size: 13px; font-weight: 700; cursor: pointer;
   }
-  /* Aktiivinen tila (mittaus käynnissä) - sama periaate kuin Kuuntele ääntä
-     -napin oranssi väri, jotta "kesken oleva toiminto" tunnistaa saman
-     värikielen kautta koko sovelluksessa. */
+  /* Aktiivinen/kesken oleva tila (mittaus käynnissä tai valinta kesken) -
+     sama periaate kuin Kuuntele ääntä -napin oranssi väri, jotta "kesken
+     oleva toiminto" tunnistaa saman värikielen kautta koko sovelluksessa. */
   .popup-btn-active { background: var(--orange); }
 
   /* Etäisyysmittauksen lukema kartalla, viivan keskikohdassa - selkeästi
@@ -306,6 +309,6 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="shared.js?v=42"></script>
+  <script src="shared.js?v=43"></script>
 </body>
 </html>
