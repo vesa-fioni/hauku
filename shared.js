@@ -844,23 +844,12 @@ function buildPopupHtml(uid) {
 
   html += `</div>`;
 
-  // Popupin toimintorivi (ks. hauku-etaisyysmittaus-valmistusohje.md) -
-  // rakenteellisesti valmis useammalle toiminnolle myöhemmin. Rivi
-  // rakennetaan listana nappeja, jotta yksittäisen toiminnon piilottaminen
-  // (esim. omalta merkiltä) ei vaadi koko rivin poistamista - vain kyseinen
-  // nappi jää listasta pois.
-  const isSelf = currentAuth?.currentUser?.uid === uid;
+  // Popupin toimintorivi (ks. hauku-etaisyysmittaus-valmistusohje.md).
+  // Yksi yhtenäinen mittaustoiminto: valitaan kaksi jäsentä (oma sijainti
+  // kelpaa yhdeksi niistä), ei erillistä "Etäisyys minuun" -pikanäppäintä -
+  // se aiheutti kaksi päällekkäistä "Lopeta mittaus" -nappia samaan popupiin
+  // kun sama jäsenpari oli mitattu myös yleisen valinnan kautta (korjattu).
   const actionButtons = [];
-
-  // "Etäisyys minuun" ei ole mielekäs omalla merkillä (etäisyys itseensä on
-  // aina nolla) ja sekoittaa sen sijaan mikä merkeistä on "minä" - piilotetaan
-  // siksi kokonaan omalta popupilta.
-  if (!isSelf) {
-    const measuring = isMeasuringPair(currentAuth?.currentUser?.uid, uid);
-    const measureLabel = measuring ? "Lopeta mittaus" : "Etäisyys minuun";
-    const measureClass = measuring ? "popup-btn popup-btn-active" : "popup-btn";
-    actionButtons.push(`<button type="button" class="${measureClass}" data-action="measure">${measureLabel}</button>`);
-  }
 
   // Kahden mielivaltaisen jäsenen välinen mittaus (vaihe 2, ks.
   // hauku-etaisyysmittaus-valmistusohje.md) - näkyy kaikilla jäsenillä,
@@ -874,7 +863,7 @@ function buildPopupHtml(uid) {
     // Jos tällä jäsenellä on jo aktiivinen mittaus toiseen jäseneen, näytetään
     // suoraan "Lopeta mittaus" - ei pakoteta käyttäjää muistamaan kumman
     // jäsenen kanssa mittaus on käynnissä ja toistamaan koko valintaa.
-    const existingPair = findNonSelfPairInvolving(uid);
+    const existingPair = findPairInvolving(uid);
     if (existingPair) {
       pairLabel = "Lopeta mittaus";
       pairClass = "popup-btn popup-btn-active";
@@ -966,12 +955,10 @@ function startListeningToGroup(db, cfg) {
               className: "marker-label"
             })
             // Popupin sisältö rakennetaan funktiona (buildPopupHtml), joten
-            // toimintorivin napit pitää sitoa aina kun popup avataan uudelleen -
+            // toimintorivin nappi pitää sitoa aina kun popup avataan uudelleen -
             // sama käsittelijä pysyy voimassa koko merkin elinkaaren ajan.
             .on("popupopen", (e) => {
               const el = e.popup.getElement();
-              const measureBtn = el && el.querySelector('.popup-btn[data-action="measure"]');
-              if (measureBtn) measureBtn.addEventListener("click", () => toggleSelfMeasurement(uid));
               const pairBtn = el && el.querySelector('.popup-btn[data-action="pair"]');
               if (pairBtn) pairBtn.addEventListener("click", () => handlePairMeasureClick(uid));
             });
@@ -1062,18 +1049,16 @@ function isMeasuringPair(uidA, uidB) {
   return !!activeMeasurements[pairKey(uidA, uidB)];
 }
 
-// Etsii jäsenen uid mahdollisen aktiivisen "Mittaa toiseen jäseneen"
-// -mittauksen - jätetään pois oma-sijainti-mittaus (uid <-> minä), koska
-// sillä on oma erillinen nappinsa ja tila ("Etäisyys minuun"/"Lopeta
-// mittaus"). Palauttaa mittausolion tai null. Yksi jäsen voi olla mukana
-// vain yhdessä tällaisessa mittauksessa kerrallaan (ks. handlePairMeasureClick),
-// joten haku voi pysähtyä ensimmäiseen osumaan.
-function findNonSelfPairInvolving(uid) {
-  const selfUid = currentAuth?.currentUser?.uid;
+// Etsii jäsenen uid mahdollisen aktiivisen mittauksen (kumpaan tahansa
+// toiseen jäseneen, oma sijainti mukaan lukien - ei enää erillistä
+// poikkeusta, koska erillinen "Etäisyys minuun" -pikanäppäin poistettiin).
+// Palauttaa mittausolion tai null. Yksi jäsen voi olla mukana vain yhdessä
+// mittauksessa kerrallaan (ks. handlePairMeasureClick), joten haku voi
+// pysähtyä ensimmäiseen osumaan.
+function findPairInvolving(uid) {
   for (const key in activeMeasurements) {
     const m = activeMeasurements[key];
-    const isSelfPair = (m.a === selfUid && m.b === uid) || (m.b === selfUid && m.a === uid);
-    if (!isSelfPair && (m.a === uid || m.b === uid)) return m;
+    if (m.a === uid || m.b === uid) return m;
   }
   return null;
 }
@@ -1168,20 +1153,9 @@ function reopenPopupIfOpen(uid) {
 
 // "Etäisyys minuun" -nappi: pikakutsu yleiseen pari-mittaukseen, jossa
 // toinen päätepiste on aina oma sijainti.
-function toggleSelfMeasurement(uid) {
-  const selfUid = currentAuth?.currentUser?.uid;
-  if (!selfUid || !markers[selfUid]) {
-    setStatus("Omaa sijaintia ei ole vielä saatavilla mittausta varten.");
-    return;
-  }
-  if (uid === selfUid) return; // etäisyys itseensä ei ole mielekäs - ks. buildPopupHtml
-  if (isMeasuringPair(selfUid, uid)) {
-    stopMeasurementBetween(selfUid, uid);
-  } else {
-    startMeasurementBetween(selfUid, uid);
-  }
-  reopenPopupIfOpen(uid);
-}
+// (Aiempi "Etäisyys minuun" -pikanäppäinfunktio poistettu - ks. huomio
+// buildPopupHtml:ssa. Oma sijainti mitataan nyt samalla yleisellä
+// kahden jäsenen valinnalla kuin mikä tahansa muukin pari.)
 
 // Kahden mielivaltaisen jäsenen välinen mittaus (vaihe 2, ks.
 // hauku-etaisyysmittaus-valmistusohje.md). Valinta tehdään kahdessa
@@ -1199,8 +1173,8 @@ function handlePairMeasureClick(uid) {
   } else if (pendingMeasureFrom === null) {
     // Jos jäsenellä on jo aktiivinen mittaus (napin teksti oli "Lopeta
     // mittaus"), sammutetaan se suoraan sen sijaan että aloitettaisiin uusi
-    // valinta - ks. findNonSelfPairInvolving ja buildPopupHtml.
-    const existingPair = findNonSelfPairInvolving(uid);
+    // valinta - ks. findPairInvolving ja buildPopupHtml.
+    const existingPair = findPairInvolving(uid);
     if (existingPair) {
       stopMeasurementBetween(existingPair.a, existingPair.b);
     } else {
@@ -1356,7 +1330,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v45";
+const APP_VERSION = "v46";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
