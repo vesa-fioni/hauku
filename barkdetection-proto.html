@@ -138,15 +138,38 @@
   </div>
 
   <div class="card">
-    <h2>Merkitse mitä oikeasti tapahtui (ground truth)</h2>
+    <h2>Merkitse ja tallenna opetusnäyte</h2>
+    <div style="font-size:11px; color:#999; margin-bottom:6px;">
+      Painallus tallentaa n. 3s ääninäytteen puskurista TÄLLÄ hetkellä + liittää siihen
+      merkinnän. Näyte on samaa laatua (16 kHz, mono) kuin mitä malli itse "kuulee" -
+      ei alkuperäistä mikrofonin täyttä laatua. Voit myös tallentaa ensin ja
+      kuunnella/luokitella vasta jälkikäteen alla olevasta listasta.
+    </div>
     <div class="tag-grid">
       <button class="btn btn-secondary tag-btn" data-tag="Haukku">Tavallinen haukku</button>
       <button class="btn btn-secondary tag-btn" data-tag="Vinkuna/kipu">Vinkuna / kipu</button>
       <button class="btn btn-secondary tag-btn" data-tag="Murina">Murina</button>
       <button class="btn btn-secondary tag-btn" data-tag="Ulvonta">Ulvonta</button>
       <button class="btn btn-secondary tag-btn" data-tag="Tuuli/muu ääni">Tuuli / muu ääni</button>
-      <button class="btn btn-secondary tag-btn" data-tag="Ei mitään erityistä">Ei mitään erityistä</button>
+      <button class="btn btn-secondary tag-btn" data-tag="Taustaääni (ei koiraa)">Taustaääni (ei koiraa)</button>
     </div>
+    <button id="captureUnlabeledBtn" class="btn btn-primary" style="margin-top:10px;">
+      Tallenna näyte NYT – luokittele kuuntelemalla jälkikäteen
+    </button>
+  </div>
+
+  <div class="card">
+    <h2>Opetusnäytteet (<span id="clipCount">0</span> kpl)</h2>
+    <div style="font-size:11px; color:#999; margin-bottom:6px;">
+      Kuuntele näyte ja valitse/korjaa luokka alasvetovalikosta - napin painalluksella
+      valittu luokka on vain alkuarvaus, ei lopullinen totuus.
+    </div>
+    <div id="clipList" style="font-size:12px; color:#555; max-height:260px; overflow-y:auto;">
+      Ei vielä tallennettuja näytteitä.
+    </div>
+    <button id="downloadAllClipsBtn" class="btn btn-secondary" style="margin-top:8px;">Lataa kaikki näytteet (.wav)</button>
+    <button id="downloadManifestBtn" class="btn btn-secondary" style="margin-top:6px;">Lataa manifest (.csv)</button>
+    <button id="clearClipsBtn" class="btn btn-secondary" style="margin-top:6px;">Tyhjennä näytteet</button>
   </div>
 
   <div class="card">
@@ -157,7 +180,7 @@
     <button id="clearLogBtn" class="btn btn-secondary" style="margin-top:6px;">Tyhjennä loki</button>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js" crossorigin="anonymous"></script>
   <script>
   // ---------------------------------------------------------------
   // Haukkuhälytys-prototyyppi
@@ -184,13 +207,31 @@
   // Nosta tätä JOKA KERTA kun tiedostoa muutetaan - näkyy otsikossa ja lokin
   // ensimmäisellä rivillä, jotta näet suoraan onko githack.com tarjoillut
   // vanhan cachetun version vai tuoreimman.
-  const PROTO_VERSION = 'v3';
+  const PROTO_VERSION = 'v6';
+
+  // Globaali virheenkäsittelijä: näyttää oikean virheviestin sovelluksen omassa
+  // lokissa "Script error." -piilotuksen sijaan (joka johtuu selaimen CORS-
+  // suojauksesta eri origin-osoitteesta ladatuille skripteille ilman
+  // crossorigin-attribuuttia). Rekisteröity mahdollisimman aikaisin, jotta
+  // se nappaa myös alustuksen aikaiset virheet.
+  window.addEventListener('error', (e) => {
+    const msg = e.message || 'tuntematon virhe';
+    const loc = e.filename ? ` (${e.filename.split('/').pop()}:${e.lineno})` : '';
+    if (typeof addLogEntry === 'function') {
+      addLogEntry('sys', 'JS-VIRHE: ' + msg + loc);
+    } else {
+      console.error('JS-VIRHE ennen lokin alustusta:', msg, loc);
+    }
+  });
 
   const MODEL_URL = 'https://tfhub.dev/google/tfjs-model/yamnet/tfjs/1';
   const CLASS_MAP_URL = 'https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv';
   const TARGET_SAMPLE_RATE = 16000;
   const WINDOW_SAMPLES = 16000; // ~1s ikkuna, karkea approksimaatio YAMNetin natiivista 0.96s/0.48s-kehyksestä
   const HOP_MS = 500;
+  const CAPTURE_SECONDS = 3; // opetusnäytteiden pituus (merkintänapin painalluksesta taaksepäin)
+  const UNLABELED = 'Ei luokiteltu';
+  const LABEL_OPTIONS = ['Haukku', 'Vinkuna/kipu', 'Murina', 'Ulvonta', 'Tuuli/muu ääni', 'Taustaääni (ei koiraa)', UNLABELED];
 
   // AudioSet-indeksit koiraluokille (yamnet_class_map.csv)
   const DOG_CLASSES = [
@@ -211,6 +252,7 @@
   let sessionStartMs = null;
   let dogClassOverThreshold = {}; // idx -> bool, reunantunnistusta varten lokiin
   const logEntries = []; // {t, type, text}
+  const capturedClips = []; // {id, label, t, durationSec, blob}
 
   // ---- Apufunktiot ----
 
@@ -284,7 +326,107 @@
     return result;
   }
 
-  function buildDogBars() {
+  // Pieni PCM16 WAV-enkooderi (ei ulkoisia riippuvuuksia) - koodaa 16kHz mono
+  // Float32-näytteet standardiksi .wav-tiedostoksi, jonka mikä tahansa
+  // äänenkäsittelyohjelma tai Python (scipy/librosa) osaa lukea suoraan.
+  function encodeWAV(samples, sampleRate) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+    function writeString(offset, str) {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    }
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);  // PCM
+    view.setUint16(22, 1, true);  // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // tavua/s
+    view.setUint16(32, 2, true);  // block align
+    view.setUint16(34, 16, true); // bittiä/näyte
+    writeString(36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++, offset += 2) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return new Blob([view], { type: 'audio/wav' });
+  }
+
+  function sanitizeForFilename(str) {
+    return str.replace(/[^a-zA-Z0-9åäöÅÄÖ]+/g, '_').replace(/^_+|_+$/g, '');
+  }
+
+  function clipFilename(clip, index) {
+    return `${sanitizeForFilename(clip.label)}_${clip.t.replace(':', '')}_${index}.wav`;
+  }
+
+  function captureAndTag(label) {
+    if (!isListening || rollingBuffer.length === 0) {
+      addLogEntry('sys', `MERKINTÄ (ei ääntä puskurissa - aloita kuuntelu ensin): ${label}`);
+      return;
+    }
+    const samples = new Float32Array(rollingBuffer); // koko saatavilla oleva puskuri, enintään CAPTURE_SECONDS
+    const blob = encodeWAV(samples, TARGET_SAMPLE_RATE);
+    const clip = {
+      id: Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      label,
+      t: elapsedLabel(),
+      durationSec: (samples.length / TARGET_SAMPLE_RATE).toFixed(2),
+      blob,
+    };
+    capturedClips.push(clip);
+    renderCapturedList();
+    addLogEntry('tag', `MERKINTÄ + NÄYTE TALLENNETTU: ${label} (${clip.durationSec}s)`);
+  }
+
+  function renderCapturedList() {
+    document.getElementById('clipCount').textContent = capturedClips.length;
+    const listEl = document.getElementById('clipList');
+    if (capturedClips.length === 0) {
+      listEl.textContent = 'Ei vielä tallennettuja näytteitä.';
+      return;
+    }
+    listEl.innerHTML = capturedClips.map((c, i) => {
+      if (!c._url) c._url = URL.createObjectURL(c.blob); // luodaan vain kerran per klippi, ei joka renderillä
+      const options = LABEL_OPTIONS.map(opt =>
+        `<option value="${opt}" ${opt === c.label ? 'selected' : ''}>${opt}</option>`
+      ).join('');
+      return `<div style="padding:6px 0; border-bottom:1px solid #f0f0f0;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <span>#${i + 1} · <span id="clip-labeltext-${i}">${c.label}</span> · ${c.durationSec}s · [${c.t}]</span>
+          <a id="clip-download-${i}" href="${c._url}" download="${clipFilename(c, i + 1)}" style="color:var(--forest); font-weight:700; font-size:11px;">Lataa</a>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <audio controls preload="none" src="${c._url}" style="height:30px; flex:1;"></audio>
+          <select class="clip-label-select" data-idx="${i}" style="font-size:11px; padding:3px; border-radius:5px; border:1px solid #ddd;">
+            ${options}
+          </select>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Delegoitu kuuntelija luokka-valikoille - ei lisätä uudelleen joka renderillä,
+  // koska riittää yksi kuuntelija koko listan konttorille (event delegation).
+  document.getElementById('clipList').addEventListener('change', (e) => {
+    if (!e.target.classList.contains('clip-label-select')) return;
+    const idx = parseInt(e.target.dataset.idx, 10);
+    const newLabel = e.target.value;
+    capturedClips[idx].label = newLabel;
+    // Päivitetään vain kyseisen rivin teksti/lataus-nimi ilman koko listan
+    // uudelleenpiirtoa, jotta soittimen mahdollinen toisto ei keskeydy.
+    const labelTextEl = document.getElementById('clip-labeltext-' + idx);
+    if (labelTextEl) labelTextEl.textContent = newLabel;
+    const downloadEl = document.getElementById('clip-download-' + idx);
+    if (downloadEl) downloadEl.download = clipFilename(capturedClips[idx], idx + 1);
+    addLogEntry('sys', `Näytteen #${idx + 1} luokka vaihdettu kuuntelun jälkeen: ${newLabel}`);
+  });
+
+
     const container = document.getElementById('dogBars');
     container.innerHTML = '';
     DOG_CLASSES.forEach(cls => {
@@ -351,7 +493,7 @@
       const input = e.inputBuffer.getChannelData(0);
       const resampled = downsample(input, nativeRate, TARGET_SAMPLE_RATE);
       for (let i = 0; i < resampled.length; i++) rollingBuffer.push(resampled[i]);
-      const maxKeep = WINDOW_SAMPLES * 2;
+      const maxKeep = CAPTURE_SECONDS * TARGET_SAMPLE_RATE;
       if (rollingBuffer.length > maxKeep) {
         rollingBuffer.splice(0, rollingBuffer.length - maxKeep);
       }
@@ -452,8 +594,51 @@
 
   document.querySelectorAll('.tag-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      addLogEntry('tag', `MERKINTÄ: ${btn.dataset.tag}`);
+      captureAndTag(btn.dataset.tag);
     });
+  });
+
+  document.getElementById('captureUnlabeledBtn').addEventListener('click', () => {
+    captureAndTag(UNLABELED);
+  });
+
+  document.getElementById('downloadAllClipsBtn').addEventListener('click', () => {
+    if (capturedClips.length === 0) return;
+    // Peräkkäiset lataukset pienellä viiveellä - osa selaimista estää liian
+    // monta samanaikaista latausta yhdellä käyttäjän klikkauksella.
+    let i = 0;
+    function next() {
+      if (i >= capturedClips.length) return;
+      const c = capturedClips[i];
+      const a = document.createElement('a');
+      a.href = c._url || URL.createObjectURL(c.blob);
+      a.download = clipFilename(c, i + 1);
+      a.click();
+      i++;
+      setTimeout(next, 300);
+    }
+    next();
+  });
+
+  document.getElementById('downloadManifestBtn').addEventListener('click', () => {
+    const header = 'tiedosto,luokka,aika_istunnossa,kesto_s\n';
+    const rows = capturedClips.map((c, i) =>
+      `${clipFilename(c, i + 1)},${c.label},${c.t},${c.durationSec}`
+    ).join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'opetusnaytteet-manifest-' + Date.now() + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('clearClipsBtn').addEventListener('click', () => {
+    capturedClips.forEach(c => { if (c._url) URL.revokeObjectURL(c._url); });
+    capturedClips.length = 0;
+    renderCapturedList();
+    addLogEntry('sys', 'Opetusnäytteet tyhjennetty.');
   });
 
   // ---- Lokin lataus / tyhjennys ----
@@ -509,6 +694,7 @@
   document.getElementById('versionBar').textContent = 'Versio ' + PROTO_VERSION;
   addLogEntry('sys', `Sivu ladattu, versio ${PROTO_VERSION}.`);
   buildDogBars();
+  renderCapturedList();
   </script>
 </body>
 </html>
