@@ -780,6 +780,11 @@ let alertTimers = {};    // uid -> timeoutId (visuaalisen renkaan sammutus)
 let lastAlertSeen = {};  // uid -> alertAt (ms) - viimeksi reagoitu hälytysaikaleima
 let memberData = {};     // uid -> viimeisin Firestore-data, popupin ja vanhentumislaskennan pohjaksi
 
+// uid -> { line: L.Polyline, labelMarker: L.Marker } - jäsenet joille etäisyysmittaus
+// on käynnissä. Ks. hauku-etaisyysmittaus-valmistusohje.md. Puhtaasti näyttöpuolen
+// tila - ei Firestore-kirjoitusta, hyödyntää jo olemassa olevaa markers-dataa.
+let activeMeasurements = {};
+
 // Kynnys, jonka jälkeen merkki himmennetään merkiksi vanhentuneesta datasta
 // (esim. koira taustalla / ruutu sammunut, ks. whitepaper kohta 14.1). Ei
 // tekstiä pysyvään tooltippiin - pelkkä visuaalinen himmennys riittää
@@ -829,6 +834,19 @@ function buildPopupHtml(uid) {
   }
 
   html += `</div>`;
+
+  // Popupin toimintorivi (ks. hauku-etaisyysmittaus-valmistusohje.md) -
+  // rakenteellisesti valmis useammalle toiminnolle myöhemmin. Vaiheessa 1
+  // vain "Etäisyys minuun" - sama toiminto näkyy kaikilla jäsenillä, myös
+  // omalla merkillä. Nappi vaihtaa tekstiään tilan mukaan, samaan tapaan
+  // kuin Pysäytä/Jatka.
+  const measuring = isMeasuring(uid);
+  const measureLabel = measuring ? "Lopeta mittaus" : "Etäisyys minuun";
+  const measureClass = measuring ? "popup-btn popup-btn-active" : "popup-btn";
+  html += `<div class="popup-actions">
+    <button type="button" class="${measureClass}" data-action="measure">${measureLabel}</button>
+  </div>`;
+
   return html;
 }
 
@@ -869,6 +887,9 @@ function startListeningToGroup(db, cfg) {
           if (alertTimers[uid]) { clearTimeout(alertTimers[uid]); delete alertTimers[uid]; }
           delete lastAlertSeen[uid];
           delete memberData[uid];
+          // Jäsen poistui - mahdollinen kesken ollut mittaus kyseiseen jäseneen
+          // pitää siivota, ettei kartalle jää "orpoa" viivaa osoittamaan tyhjää.
+          stopMeasurement(uid);
           return;
         }
 
@@ -895,6 +916,14 @@ function startListeningToGroup(db, cfg) {
               direction: "top",
               offset: [0, -22],
               className: "marker-label"
+            })
+            // Popupin sisältö rakennetaan funktiona (buildPopupHtml), joten
+            // toimintorivin nappi pitää sitoa aina kun popup avataan uudelleen -
+            // sama käsittelijä pysyy voimassa koko merkin elinkaaren ajan.
+            .on("popupopen", (e) => {
+              const el = e.popup.getElement();
+              const btn = el && el.querySelector('.popup-btn[data-action="measure"]');
+              if (btn) btn.addEventListener("click", () => toggleMeasurement(uid));
             });
         }
 
@@ -927,6 +956,11 @@ function startListeningToGroup(db, cfg) {
           firstFix = false;
         }
       });
+
+      // Mikä tahansa sijaintipäivitys (oma tai kohde) voi vaikuttaa käynnissä
+      // oleviin mittauksiin - päivitetään kaikki kerralla erän lopuksi, ei
+      // jokaisen yksittäisen docChange-tapahtuman kohdalla erikseen.
+      updateAllActiveMeasurements();
     }, err => setStatus("Virhe kuunnellessa ryhmää: " + err.message));
 
   db.collection("groups").doc(cfg.groupCode).collection("members")
@@ -952,6 +986,109 @@ function startListeningToGroup(db, cfg) {
           });
       });
     });
+}
+
+// ---- Etäisyysmittaus omasta sijainnista jäseneen ----
+// Ks. hauku-etaisyysmittaus-valmistusohje.md. Puhtaasti näyttöpuolen
+// ominaisuus - ei Firestore-kirjoitusta/-lukua, hyödyntää dataa joka on jo
+// muutenkin saatavilla (oma ja kohdejäsenen sijainti, molemmat markers-
+// oliossa Firestoren onSnapshot-synkronoituna).
+
+function formatDistance(meters) {
+  if (meters >= 1000) return (meters / 1000).toFixed(1).replace(".", ",") + " km";
+  return Math.round(meters) + " m";
+}
+
+function midpoint(latlng1, latlng2) {
+  return [(latlng1.lat + latlng2.lat) / 2, (latlng1.lng + latlng2.lng) / 2];
+}
+
+function isMeasuring(uid) {
+  return !!activeMeasurements[uid];
+}
+
+// Viiva: katkoviiva, lähes läpinäkyvä, neutraali väri (ei koira/ihminen-
+// brändiväri, ettei sekoitu rooliväritykseen) - antaa visuaalisen
+// kontekstin sille mitä lukema tarkoittaa, ks. valmistusohjeen kohta 4.
+function startMeasurement(uid) {
+  const selfUid = currentAuth?.currentUser?.uid;
+  if (!selfUid || !markers[selfUid]) {
+    setStatus("Omaa sijaintia ei ole vielä saatavilla mittausta varten.");
+    return;
+  }
+  if (!markers[uid] || activeMeasurements[uid]) return;
+
+  const line = L.polyline(
+    [markers[selfUid].getLatLng(), markers[uid].getLatLng()],
+    { color: "#444444", weight: 2, opacity: 0.35, dashArray: "6,8" }
+  ).addTo(map);
+
+  const labelMarker = L.marker(
+    midpoint(markers[selfUid].getLatLng(), markers[uid].getLatLng()),
+    {
+      icon: L.divIcon({
+        className: "",
+        html: `<div class="distance-label"></div>`,
+        iconSize: [60, 20],
+        iconAnchor: [30, 10]
+      }),
+      interactive: false
+    }
+  ).addTo(map);
+
+  activeMeasurements[uid] = { line, labelMarker };
+  updateMeasurement(uid);
+}
+
+// Kutsutaan aina kun jonkun jäsenen sijainti päivittyy (oma tai kohde) -
+// ks. startListeningToGroup. Näin viiva ja lukema pysyvät ajan tasalla
+// ilman erillistä ajastinta.
+function updateMeasurement(uid) {
+  const m = activeMeasurements[uid];
+  if (!m) return;
+  const selfUid = currentAuth?.currentUser?.uid;
+  if (!selfUid || !markers[selfUid] || !markers[uid]) {
+    stopMeasurement(uid);
+    return;
+  }
+  const selfLatLng = markers[selfUid].getLatLng();
+  const targetLatLng = markers[uid].getLatLng();
+  m.line.setLatLngs([selfLatLng, targetLatLng]);
+  m.labelMarker.setLatLng(midpoint(selfLatLng, targetLatLng));
+
+  const meters = haversineMeters(selfLatLng.lat, selfLatLng.lng, targetLatLng.lat, targetLatLng.lng);
+  const el = m.labelMarker.getElement();
+  const inner = el && el.querySelector(".distance-label");
+  if (inner) inner.textContent = formatDistance(meters);
+}
+
+function updateAllActiveMeasurements() {
+  Object.keys(activeMeasurements).forEach(updateMeasurement);
+}
+
+function stopMeasurement(uid) {
+  const m = activeMeasurements[uid];
+  if (!m) return;
+  map.removeLayer(m.line);
+  map.removeLayer(m.labelMarker);
+  delete activeMeasurements[uid];
+}
+
+// Useampi mittaus voi olla käynnissä yhtä aikaa eri jäsenille - toggle
+// koskee vain sitä yhtä jäsentä jonka popupista nappia painettiin.
+function toggleMeasurement(uid) {
+  if (isMeasuring(uid)) {
+    stopMeasurement(uid);
+  } else {
+    startMeasurement(uid);
+  }
+  // Jos popup on auki, suljetaan ja avataan heti uudelleen - bindPopup on
+  // funktiopohjainen (buildPopupHtml(uid)), joten tämä hakee tuoreen
+  // sisällön ja napin tekstin ilman erillistä DOM-päivityslogiikkaa.
+  const marker = markers[uid];
+  if (marker && marker.isPopupOpen()) {
+    marker.closePopup().openPopup();
+  }
 }
 
 // ---- Haukkuhälytys (vaihe 1: äänenvoimakkuustunnistus) ----
@@ -1091,7 +1228,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v38";
+const APP_VERSION = "v40";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan

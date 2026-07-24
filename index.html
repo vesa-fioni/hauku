@@ -228,6 +228,39 @@
   .popup-info { font-size: 13px; line-height: 1.6; }
   .popup-info strong { font-size: 14px; }
 
+  /* Popupin toimintorivi (ks. hauku-etaisyysmittaus-valmistusohje.md) -
+     rakenteellisesti valmis useammalle toiminnolle myöhemmin, vaiheessa 1
+     vain "Etäisyys minuun" -nappi. */
+  .popup-actions {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;
+  }
+  .popup-btn {
+    width: 100%; padding: 8px; border: none; border-radius: 6px;
+    background: var(--forest); color: white;
+    font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+  /* Aktiivinen tila (mittaus käynnissä) - sama periaate kuin Kuuntele ääntä
+     -napin oranssi väri, jotta "kesken oleva toiminto" tunnistaa saman
+     värikielen kautta koko sovelluksessa. */
+  .popup-btn-active { background: var(--orange); }
+
+  /* Etäisyysmittauksen lukema kartalla, viivan keskikohdassa - selkeästi
+     pienempi kuin jäsenten nimilaput (marker-label), jotta se ei kilpaile
+     huomiosta itse kohteiden kanssa. Viiva itsessään (piirretty Leafletin
+     polyline-optioilla, ei CSS:llä) kertoo mistä kahdesta pisteestä lukema
+     on kyse. */
+  .distance-label {
+    background: rgba(255,255,255,0.85);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #444;
+    white-space: nowrap;
+    text-align: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  }
+
   /* "Keskitä minuun" -nappi (bottomright) - sama visuaalinen tyyli kuin
      Leafletin oma zoom-kontrolli (leaflet-bar), jotta se ei erotu
      ylimääräisenä efektinä vaan tuntuu osalta kartan omaa käyttöliittymää. */
@@ -273,6 +306,6 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="shared.js?v=39"></script>
+  <script src="shared.js?v=40"></script>
 </body>
 </html>
