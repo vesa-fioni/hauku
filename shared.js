@@ -836,16 +836,26 @@ function buildPopupHtml(uid) {
   html += `</div>`;
 
   // Popupin toimintorivi (ks. hauku-etaisyysmittaus-valmistusohje.md) -
-  // rakenteellisesti valmis useammalle toiminnolle myöhemmin. Vaiheessa 1
-  // vain "Etäisyys minuun" - sama toiminto näkyy kaikilla jäsenillä, myös
-  // omalla merkillä. Nappi vaihtaa tekstiään tilan mukaan, samaan tapaan
-  // kuin Pysäytä/Jatka.
-  const measuring = isMeasuring(uid);
-  const measureLabel = measuring ? "Lopeta mittaus" : "Etäisyys minuun";
-  const measureClass = measuring ? "popup-btn popup-btn-active" : "popup-btn";
-  html += `<div class="popup-actions">
-    <button type="button" class="${measureClass}" data-action="measure">${measureLabel}</button>
-  </div>`;
+  // rakenteellisesti valmis useammalle toiminnolle myöhemmin. Rivi
+  // rakennetaan listana nappeja, jotta yksittäisen toiminnon piilottaminen
+  // (esim. omalta merkiltä) ei vaadi koko rivin poistamista - vain kyseinen
+  // nappi jää listasta pois.
+  const isSelf = currentAuth?.currentUser?.uid === uid;
+  const actionButtons = [];
+
+  // "Etäisyys minuun" ei ole mielekäs omalla merkillä (etäisyys itseensä on
+  // aina nolla) ja sekoittaa sen sijaan mikä merkeistä on "minä" - piilotetaan
+  // siksi kokonaan omalta popupilta.
+  if (!isSelf) {
+    const measuring = isMeasuring(uid);
+    const measureLabel = measuring ? "Lopeta mittaus" : "Etäisyys minuun";
+    const measureClass = measuring ? "popup-btn popup-btn-active" : "popup-btn";
+    actionButtons.push(`<button type="button" class="${measureClass}" data-action="measure">${measureLabel}</button>`);
+  }
+
+  if (actionButtons.length > 0) {
+    html += `<div class="popup-actions">${actionButtons.join("")}</div>`;
+  }
 
   return html;
 }
@@ -1016,6 +1026,7 @@ function startMeasurement(uid) {
     setStatus("Omaa sijaintia ei ole vielä saatavilla mittausta varten.");
     return;
   }
+  if (uid === selfUid) return; // etäisyys itseensä ei ole mielekäs - ks. buildPopupHtml
   if (!markers[uid] || activeMeasurements[uid]) return;
 
   const line = L.polyline(
@@ -1228,7 +1239,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v40";
+const APP_VERSION = "v41";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
