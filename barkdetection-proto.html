@@ -426,7 +426,7 @@
     addLogEntry('sys', `Näytteen #${idx + 1} luokka vaihdettu kuuntelun jälkeen: ${newLabel}`);
   });
 
-
+  function buildDogBars() {
     const container = document.getElementById('dogBars');
     container.innerHTML = '';
     DOG_CLASSES.forEach(cls => {
