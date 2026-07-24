@@ -53,7 +53,13 @@ function getUrlConfig() {
   if (role === "dog" || role === "hunter") result.role = role;
 
   const mapStyle = p.get("mapStyle");
-  if (mapStyle === "osm" || mapStyle === "topo") result.mapStyle = mapStyle;
+  if (mapStyle === "osm" || mapStyle === "topo" || mapStyle === "mml") result.mapStyle = mapStyle;
+
+  // Huom: mmlApiKey luetaan URL:sta jos sellainen sattuu olemaan (esim.
+  // käyttäjä rakentaa linkin itse käsin), mutta sovelluksen oma "Kopioi
+  // jakolinkki" / "Jaa..." ei enää laita tätä linkkiin - ks. buildShareLink.
+  const mmlApiKey = p.get("mmlApiKey");
+  if (mmlApiKey) result.mmlApiKey = mmlApiKey;
 
   const fb = {};
   ["apiKey", "authDomain", "projectId", "appId"].forEach((key) => {
@@ -80,6 +86,12 @@ function buildShareLink(cfg) {
   const url = new URL(window.location.origin + window.location.pathname);
   if (cfg.groupCode) url.searchParams.set("group", cfg.groupCode);
   if (cfg.groupName) url.searchParams.set("groupName", cfg.groupName);
+  // Huom: mmlApiKey EI kulje jakolinkin mukana tarkoituksella - se on
+  // henkilökohtainen, MML:n OmaTili-tilaan sidottu avain, eikä sen leviäminen
+  // esim. WhatsApp-viestien tai kuvakaappausten kautta ole toivottavaa.
+  // Koska "Maastokartta (MML)" -valinta defaulttaa automaattisesti OSM:ään
+  // jos avainta ei ole, jokainen syöttää oman avaimensa itse omalle
+  // laitteelleen - ks. keskustelu 24.7.2026.
   if (cfg.firebase) {
     Object.entries(cfg.firebase).forEach(([k, v]) => {
       if (v) url.searchParams.set(k, v);
@@ -105,6 +117,7 @@ function renderConfigForm(existing, urlCfg) {
   const fbValue = (key) => existing?.firebase?.[key] || urlCfg.firebase?.[key] || "";
   const roleValue = existing?.role || urlCfg.role || "hunter";
   const mapStyleValue = existing?.mapStyle || urlCfg.mapStyle || "osm";
+  const mmlApiKeyValue = existing?.mmlApiKey || urlCfg.mmlApiKey || "";
   const autoStopValue = existing?.autoStopMinutes ?? urlCfg.autoStopMinutes ?? 15;
 
   const groupField = `
@@ -171,7 +184,7 @@ function renderConfigForm(existing, urlCfg) {
         <label>Karttatyyli</label>
         <div class="role-toggle">
           <label class="role-option">
-            <input type="radio" name="cfg_mapStyle" value="osm" ${mapStyleValue !== "topo" ? "checked" : ""}>
+            <input type="radio" name="cfg_mapStyle" value="osm" ${mapStyleValue === "osm" ? "checked" : ""}>
             <span class="role-dot"></span>
             Nopea (oletus)
           </label>
@@ -180,6 +193,19 @@ function renderConfigForm(existing, urlCfg) {
             <span class="role-dot"></span>
             Maasto
           </label>
+          <label class="role-option">
+            <input type="radio" name="cfg_mapStyle" value="mml" ${mapStyleValue === "mml" ? "checked" : ""}>
+            <span class="role-dot"></span>
+            Maastokartta (MML)
+          </label>
+        </div>
+        <p class="hint">
+          <a href="#" id="cfg_mml_toggle">Lisäasetukset (MML-maastokartan API-avain)</a>
+        </p>
+        <div id="cfg_mml_advanced" class="advanced-section" style="display:none;">
+          <label>Maanmittauslaitoksen API-avain</label>
+          <input id="cfg_mmlApiKey" placeholder="OmaTili-palvelusta luotu API-avain" value="${mmlApiKeyValue}">
+          <p class="hint">Vaaditaan vain jos "Maastokartta (MML)" on valittuna. Jos avainta ei ole annettu, tämä valinta palaa automaattisesti OpenStreetMapiin.</p>
         </div>
 
         <label>Automaattinen pysäytys (min)</label>
@@ -217,6 +243,7 @@ function attachConfigFormHandlers(container, onSave) {
       name: container.querySelector("#cfg_name").value.trim() || "Tuntematon",
       role,
       mapStyle,
+      mmlApiKey: container.querySelector("#cfg_mmlApiKey").value.trim(),
       autoStopMinutes,
       firebase: {
         apiKey: container.querySelector("#cfg_apiKey").value.trim(),
@@ -328,6 +355,22 @@ function attachConfigFormHandlers(container, onSave) {
         : "Lisäasetukset (Firebase-yhteys)";
     });
   }
+
+  // Sama piilotusperiaate MML-maastokartan API-avaimelle - oma erillinen
+  // kytkin, koska tämä on riippumaton Firebase-yhteydestä eikä useimmat
+  // käyttäjät tarvitse sitä ollenkaan (ks. keskustelu MML-integraatiosta).
+  const mmlToggle = container.querySelector("#cfg_mml_toggle");
+  const mmlSection = container.querySelector("#cfg_mml_advanced");
+  if (mmlToggle && mmlSection) {
+    mmlToggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      const isHidden = mmlSection.style.display === "none";
+      mmlSection.style.display = isHidden ? "block" : "none";
+      mmlToggle.textContent = isHidden
+        ? "Piilota MML-asetukset"
+        : "Lisäasetukset (MML-maastokartan API-avain)";
+    });
+  }
 }
 
 function showOnboarding(existing, urlCfg, onSave) {
@@ -402,16 +445,35 @@ const MAP_STYLES = {
       attribution: "&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap (CC-BY-SA)",
       maxZoom: 17
     }
+  },
+  // Maanmittauslaitoksen avoin Karttakuvapalvelu (WMTS), maastokartta-taso.
+  // Ei kiinteää url-kenttää tässä, koska osoite sisältää käyttäjän oman
+  // API-avaimen - rakennetaan dynaamisesti buildMmlTileUrl():lla setMapStyle:ssä.
+  mml: {
+    options: {
+      attribution: "&copy; Maanmittauslaitos (CC BY 4.0)",
+      maxZoom: 15
+    }
   }
 };
 
-function initMap(style) {
+// MML:n avoimen WMTS-palvelun REST-osoitemalli, WGS84_Pseudo-Mercator-
+// projektiossa (sama kuin Leafletin/OSM:n oletus, ei vaadi CRS-muunnosta).
+// Huom: MML:n tilematriisijärjestys on TileMatrix/TileRow/TileCol eli
+// z/y/x - {z}/{y}/{x}-paikkamerkit toimivat Leafletissä missä tahansa
+// järjestyksessä merkkijonossa, joten tämä on riittävä eikä vaadi muuta.
+function buildMmlTileUrl(apiKey) {
+  return "https://avoin-karttakuva.maanmittauslaitos.fi/avoin/wmts/1.0.0/maastokartta/default/WGS84_Pseudo-Mercator/{z}/{y}/{x}.png?api-key="
+    + encodeURIComponent(apiKey);
+}
+
+function initMap(cfg) {
   if (!map) {
     map = L.map("map", { zoomControl: false }).setView([61.9241, 25.7482], 13);
     L.control.zoom({ position: "bottomleft" }).addTo(map);
     addLocateControl();
   }
-  setMapStyle(style || "osm");
+  setMapStyle((cfg && cfg.mapStyle) || "osm", cfg);
 }
 
 // "Keskitä minuun" -nappi (bottomright, ei törmää zoom-kontrolliin
@@ -449,10 +511,29 @@ function centerOnSelf() {
   }
 }
 
-function setMapStyle(style) {
-  const conf = MAP_STYLES[style] || MAP_STYLES.osm;
+function setMapStyle(style, cfg) {
+  let effectiveStyle = style;
+  let url;
+
+  if (style === "mml") {
+    const apiKey = cfg && cfg.mmlApiKey;
+    if (apiKey) {
+      url = buildMmlTileUrl(apiKey);
+    } else {
+      // Ei API-avainta asetuksissa: defaulttaa hiljaisesti OpenStreetMapiin
+      // sen sijaan että kartta jäisi tyhjäksi/rikkinäiseksi. Käyttäjälle
+      // näytetään lyhyt selite statusrivillä, ks. keskustelu MML-
+      // integraatiosta 24.7.2026.
+      effectiveStyle = "osm";
+      setStatus("MML-maastokartan API-avain puuttuu asetuksista - käytetään OpenStreetMapia.");
+    }
+  }
+
+  const conf = MAP_STYLES[effectiveStyle] || MAP_STYLES.osm;
+  if (!url) url = conf.url;
+
   if (tileLayer) map.removeLayer(tileLayer);
-  tileLayer = L.tileLayer(conf.url, conf.options).addTo(map);
+  tileLayer = L.tileLayer(url, conf.options).addTo(map);
 }
 
 // Akkuvaroituksen kynnys - badge näkyy vain tämän alapuolella eikä silloin
@@ -579,7 +660,7 @@ function setTopbar(role, groupName) {
 
 function startPackTracker(cfg) {
   document.getElementById("app").style.display = "flex";
-  initMap(cfg.mapStyle);
+  initMap(cfg);
   setTopbar(cfg.role, cfg.groupName || cfg.groupCode);
 
   // Haukkuhälytyksen kytkin näkyy vain koiramoodissa (oma erillinen kytkin,
@@ -1492,7 +1573,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v48";
+const APP_VERSION = "v49";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -1539,6 +1620,7 @@ function boot() {
   if (!merged.groupName && urlCfg.groupName) merged.groupName = urlCfg.groupName;
   if (!merged.role && urlCfg.role) merged.role = urlCfg.role;
   if (!merged.mapStyle) merged.mapStyle = urlCfg.mapStyle || "osm";
+  if (!merged.mmlApiKey && urlCfg.mmlApiKey) merged.mmlApiKey = urlCfg.mmlApiKey;
   if (merged.autoStopMinutes === undefined) merged.autoStopMinutes = urlCfg.autoStopMinutes ?? 15;
 
   const hasFirebase = merged.firebase && merged.firebase.apiKey && merged.firebase.projectId;
