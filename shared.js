@@ -179,6 +179,7 @@ function renderConfigForm(existing, urlCfg) {
 
         <button id="cfg_save" class="btn btn-primary">Tallenna ja aloita</button>
         <button id="cfg_share" class="btn btn-secondary">Kopioi jakolinkki</button>
+        <button id="cfg_share_app" class="btn btn-secondary">Jaa... (esim. WhatsApp)</button>
         <p id="cfg_share_status" class="hint hint-ok"></p>
       </div>
 
@@ -221,8 +222,11 @@ function attachConfigFormHandlers(container, onSave) {
     onSave(cfg);
   });
 
-  container.querySelector("#cfg_share").addEventListener("click", () => {
-    const cfg = {
+  // Kerää jakolinkin rakentamiseen tarvittavat kentät lomakkeesta. Käytetään
+  // sekä "Kopioi jakolinkki"- että "Jaa..."-napin käsittelijässä, jotta
+  // kenttien luku ei ole kahdessa paikassa.
+  function collectShareCfg() {
+    return {
       groupCode: container.querySelector("#cfg_group").value.trim(),
       groupName: container.querySelector("#cfg_groupName").value.trim(),
       firebase: {
@@ -232,6 +236,10 @@ function attachConfigFormHandlers(container, onSave) {
         appId: container.querySelector("#cfg_appId").value.trim(),
       }
     };
+  }
+
+  container.querySelector("#cfg_share").addEventListener("click", () => {
+    const cfg = collectShareCfg();
     if (!cfg.groupCode || !cfg.firebase.apiKey) {
       alert("Täytä ryhmän nimi ja Firebase-tiedot ennen linkin jakamista.");
       return;
@@ -244,6 +252,38 @@ function attachConfigFormHandlers(container, onSave) {
       }).catch(() => { statusEl.textContent = link; });
     } else {
       statusEl.textContent = link;
+    }
+  });
+
+  // "Jaa..." - avaa laitteen oman jakovalikon (Web Share API), jossa
+  // WhatsApp on yleensä yksi vaihtoehto muiden joukossa. Ei vaadi
+  // WhatsApp-tiliä/API-avainta eikä omaa palvelinta - käyttäjä valitsee itse
+  // kanavan, sovellus ei koskaan jaa mitään automaattisesti.
+  // Jos Web Share API ei ole tuettu (esim. työpöytäselain), pudotaan suoraan
+  // wa.me-syväliinkkiin, koska se oli alkuperäinen käytännön tarve.
+  container.querySelector("#cfg_share_app").addEventListener("click", () => {
+    const cfg = collectShareCfg();
+    if (!cfg.groupCode || !cfg.firebase.apiKey) {
+      alert("Täytä ryhmän nimi ja Firebase-tiedot ennen linkin jakamista.");
+      return;
+    }
+    const link = buildShareLink(cfg);
+    const label = cfg.groupName || cfg.groupCode;
+    const message = `Liity Hauku-ryhmään "${label}": ${link}`;
+
+    if (navigator.share) {
+      navigator.share({
+        title: "Hauku - liity ryhmään",
+        text: `Liity Hauku-ryhmään "${label}":`,
+        url: link,
+      }).catch(() => {
+        // Käyttäjä perui jakamisen tai selain esti sen hiljaa - ei tehdä mitään,
+        // linkki on silti "Kopioi jakolinkki" -napin takana.
+      });
+    } else {
+      // Ei Web Share API -tukea: avataan wa.me suoraan valmiiksi täytetyllä
+      // viestillä, käyttäjä valitsee vastaanottajan WhatsAppissa itse.
+      window.open("https://wa.me/?text=" + encodeURIComponent(message), "_blank");
     }
   });
 
@@ -998,7 +1038,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v37";
+const APP_VERSION = "v38";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
