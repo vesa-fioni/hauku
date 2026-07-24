@@ -179,7 +179,6 @@ function renderConfigForm(existing, urlCfg) {
 
         <button id="cfg_save" class="btn btn-primary">Tallenna ja aloita</button>
         <button id="cfg_share" class="btn btn-secondary">Kopioi jakolinkki</button>
-        <button id="cfg_share_app" class="btn btn-secondary">Jaa... (esim. WhatsApp)</button>
         <p id="cfg_share_status" class="hint hint-ok"></p>
       </div>
 
@@ -222,11 +221,8 @@ function attachConfigFormHandlers(container, onSave) {
     onSave(cfg);
   });
 
-  // Kerää jakolinkin rakentamiseen tarvittavat kentät lomakkeesta. Käytetään
-  // sekä "Kopioi jakolinkki"- että "Jaa..."-napin käsittelijässä, jotta
-  // kenttien luku ei ole kahdessa paikassa.
-  function collectShareCfg() {
-    return {
+  container.querySelector("#cfg_share").addEventListener("click", () => {
+    const cfg = {
       groupCode: container.querySelector("#cfg_group").value.trim(),
       groupName: container.querySelector("#cfg_groupName").value.trim(),
       firebase: {
@@ -236,10 +232,6 @@ function attachConfigFormHandlers(container, onSave) {
         appId: container.querySelector("#cfg_appId").value.trim(),
       }
     };
-  }
-
-  container.querySelector("#cfg_share").addEventListener("click", () => {
-    const cfg = collectShareCfg();
     if (!cfg.groupCode || !cfg.firebase.apiKey) {
       alert("Täytä ryhmän nimi ja Firebase-tiedot ennen linkin jakamista.");
       return;
@@ -252,38 +244,6 @@ function attachConfigFormHandlers(container, onSave) {
       }).catch(() => { statusEl.textContent = link; });
     } else {
       statusEl.textContent = link;
-    }
-  });
-
-  // "Jaa..." - avaa laitteen oman jakovalikon (Web Share API), jossa
-  // WhatsApp on yleensä yksi vaihtoehto muiden joukossa. Ei vaadi
-  // WhatsApp-tiliä/API-avainta eikä omaa palvelinta - käyttäjä valitsee itse
-  // kanavan, sovellus ei koskaan jaa mitään automaattisesti.
-  // Jos Web Share API ei ole tuettu (esim. työpöytäselain), pudotaan suoraan
-  // wa.me-syväliinkkiin, koska se oli alkuperäinen käytännön tarve.
-  container.querySelector("#cfg_share_app").addEventListener("click", () => {
-    const cfg = collectShareCfg();
-    if (!cfg.groupCode || !cfg.firebase.apiKey) {
-      alert("Täytä ryhmän nimi ja Firebase-tiedot ennen linkin jakamista.");
-      return;
-    }
-    const link = buildShareLink(cfg);
-    const label = cfg.groupName || cfg.groupCode;
-    const message = `Liity Hauku-ryhmään "${label}": ${link}`;
-
-    if (navigator.share) {
-      navigator.share({
-        title: "Hauku - liity ryhmään",
-        text: `Liity Hauku-ryhmään "${label}":`,
-        url: link,
-      }).catch(() => {
-        // Käyttäjä perui jakamisen tai selain esti sen hiljaa - ei tehdä mitään,
-        // linkki on silti "Kopioi jakolinkki" -napin takana.
-      });
-    } else {
-      // Ei Web Share API -tukea: avataan wa.me suoraan valmiiksi täytetyllä
-      // viestillä, käyttäjä valitsee vastaanottajan WhatsAppissa itse.
-      window.open("https://wa.me/?text=" + encodeURIComponent(message), "_blank");
     }
   });
 
@@ -373,11 +333,6 @@ function addSettingsButton(onReopen) {
 // ---- Kartta + Firebase ----
 
 let map, tileLayer, markers = {}, trails = {}, firstFix = true;
-// Varaventtiili: jos oma sijainti ei ehdi ensimmäisenä (esim. GPS-lupa vielä
-// kesken), sallitaan zoomaus kenen tahansa ensimmäiseen sijaintiin muutaman
-// sekunnin jälkeen - ettei kartta jää jumiin oletusnäkymään. Ks.
-// startListeningToGroup.
-let fallbackZoomAllowed = false;
 let watchId = null;
 
 const MAP_STYLES = {
@@ -398,44 +353,8 @@ function initMap(style) {
   if (!map) {
     map = L.map("map", { zoomControl: false }).setView([61.9241, 25.7482], 13);
     L.control.zoom({ position: "bottomleft" }).addTo(map);
-    addLocateControl();
   }
   setMapStyle(style || "osm");
-}
-
-// "Keskitä minuun" -nappi (bottomright, ei törmää zoom-kontrolliin
-// bottomleftissä). Nojaa tuttuun kartta-appien konventioon (paikannuskuvake)
-// sen sijaan että kartalla lukisi mitään - ks. keskustelu 24.7.2026: visuaalinen
-// "tässä sinä olet" -korostus koettiin liian tökeräksi, tämä ja ensimmäisen
-// zoomin kohdistaminen omaan sijaintiin (ks. startListeningToGroup) valittiin
-// sen sijaan.
-function addLocateControl() {
-  const LocateControl = L.Control.extend({
-    options: { position: "bottomright" },
-    onAdd: function () {
-      const container = L.DomUtil.create("div", "leaflet-bar leaflet-control locate-control");
-      const link = L.DomUtil.create("a", "", container);
-      link.href = "#";
-      link.title = "Keskitä minuun";
-      link.innerHTML = "&#9678;"; // ◎
-      L.DomEvent.on(link, "click", (e) => {
-        L.DomEvent.stop(e);
-        centerOnSelf();
-      });
-      return container;
-    }
-  });
-  new LocateControl().addTo(map);
-}
-
-function centerOnSelf() {
-  const uid = currentAuth?.currentUser?.uid;
-  const marker = uid && markers[uid];
-  if (marker) {
-    map.setView(marker.getLatLng(), Math.max(map.getZoom(), 15));
-  } else {
-    setStatus("Omaa sijaintia ei ole vielä saatavilla");
-  }
 }
 
 function setMapStyle(style) {
@@ -444,12 +363,7 @@ function setMapStyle(style) {
   tileLayer = L.tileLayer(conf.url, conf.options).addTo(map);
 }
 
-// Akkuvaroituksen kynnys - badge näkyy vain tämän alapuolella eikä silloin
-// kun puhelin on laturissa (ks. keskustelu: exception-based näyttö, ei
-// jatkuvaa akkulukemaa kartalla).
-const LOW_BATTERY_THRESHOLD = 20;
-
-function iconFor(role, alertActive, lowBattery) {
+function iconFor(role, alertActive) {
   const SIZE = 37; // 80% aiemmasta 46px:stä
   // Omat brändi-ikonit (koira/ihminen) - väritetty roolin mukaisesti
   // (koira=oranssi, ihminen=vihreä, ks. whitepaper kohta 12).
@@ -459,11 +373,6 @@ function iconFor(role, alertActive, lowBattery) {
   const badge = alertActive
     ? `<div class="alert-badge" title="Haukkuu">🔊</div>`
     : "";
-  // Akkubadge piilotetaan haukkuhälytyksen ajaksi, ettei kaksi badgea
-  // kilpaile huomiosta samanaikaisesti - hälytys on aina tärkeämpi.
-  const batteryBadge = (!alertActive && lowBattery)
-    ? `<div class="battery-badge" title="Akku vähissä">🔋</div>`
-    : "";
   return L.divIcon({
     className: "",
     html: `
@@ -472,47 +381,15 @@ function iconFor(role, alertActive, lowBattery) {
         <img src="${src}" alt="" style="width:100%;height:100%;object-fit:contain;
                     filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6));">
         ${badge}
-        ${batteryBadge}
       </div>`,
     iconSize: [SIZE, SIZE],
     iconAnchor: [SIZE / 2, SIZE / 2]
   });
 }
 
-function isLowBattery(data) {
-  return typeof data.battery === "number" && data.battery <= LOW_BATTERY_THRESHOLD && !data.charging;
-}
-
 let currentDb = null, currentAuth = null, currentCfg = null;
 let isSending = false;
 let autoStopTimerId = null;
-
-// Akkutaso luetaan Battery Status API:sta (navigator.getBattery) jos selain
-// tukee sitä - käytännössä Chrome/Samsung Internet Androidilla, ei Safari/iOS.
-// Ei kirjoiteta Firestoreen omana erillisenä kirjoituksenaan, vaan sisällytetään
-// samaan memberRef.set()-kutsuun kuin sijainti (startSendingLocation), koska
-// Firestore-säännöt vaativat lat/lng/updatedAt-kentät jokaisessa kirjoituksessa
-// (ks. whitepaper kohta 9) - erillinen pelkkä akkukirjoitus hylättäisiin.
-// batteryManager-oliota luetaan synkronisesti jokaisen GPS-kirjoituksen
-// yhteydessä, joten arvo pysyy ajan tasalla ilman erillisiä event-kuuntelijoita.
-let batteryManager = null;
-
-function initBatteryManager() {
-  if (!navigator.getBattery) return; // ei tuettu (esim. iOS/Safari) - ei kriittistä
-  navigator.getBattery().then((battery) => {
-    batteryManager = battery;
-  }).catch(() => {
-    // Ei kriittistä - popup vain ei näytä akkuriviä tällä laitteella.
-  });
-}
-
-function currentBatteryFields() {
-  if (!batteryManager) return {};
-  return {
-    battery: Math.round(batteryManager.level * 100),
-    charging: !!batteryManager.charging
-  };
-}
 
 const PAUSE_KEY = "hauku_paused_v1";
 
@@ -586,8 +463,6 @@ function startPackTracker(cfg) {
   currentCfg = cfg;
 
   setStatus("Kirjaudutaan sisään...");
-
-  initBatteryManager();
 
   auth.signInAnonymously().then(() => {
     setStatus("Yhdistetty ryhmään: " + cfg.groupCode);
@@ -712,8 +587,7 @@ function startSendingLocation(db, auth, cfg) {
       role: cfg.role,
       name: cfg.name,
       updatedAt: firebase.firestore.Timestamp.now(),
-      expiresAt,
-      ...currentBatteryFields()
+      expiresAt
     }, { merge: true });
 
     // Jälki (track) tallennetaan vain koiramoodissa - metsästäjän reittiä ei ole tarpeen seurata.
@@ -778,132 +652,8 @@ function filterImplausibleJumps(points) {
 
 let alertTimers = {};    // uid -> timeoutId (visuaalisen renkaan sammutus)
 let lastAlertSeen = {};  // uid -> alertAt (ms) - viimeksi reagoitu hälytysaikaleima
-let memberData = {};     // uid -> viimeisin Firestore-data, popupin ja vanhentumislaskennan pohjaksi
-
-// pairKey(uidA,uidB) -> { a, b, line: L.Polyline, labelMarker: L.Marker } -
-// käynnissä olevat etäisyysmittaukset. Alun perin vain "minusta jäseneen",
-// yleistetty tukemaan mielivaltaista kahden jäsenen väliä (ks.
-// hauku-etaisyysmittaus-valmistusohje.md, vaihe 2). Puhtaasti näyttöpuolen
-// tila - ei Firestore-kirjoitusta, hyödyntää jo olemassa olevaa markers-dataa.
-let activeMeasurements = {};
-
-// Kun tämä on asetettu jäsenen uid:ksi, ollaan "Mittaa toiseen jäseneen"
-// -valinnan kesken: seuraava toisen jäsenen popupista painettu "Valitse tämä
-// pisteeksi" -nappi täydentää parin. Vain yksi valinta voi olla kesken
-// kerrallaan koko sovelluksessa - yksinkertaisin malli, riittää tähän
-// käyttötarkoitukseen.
-let pendingMeasureFrom = null;
-
-// Kynnys, jonka jälkeen merkki himmennetään merkiksi vanhentuneesta datasta
-// (esim. koira taustalla / ruutu sammunut, ks. whitepaper kohta 14.1). Ei
-// tekstiä pysyvään tooltippiin - pelkkä visuaalinen himmennys riittää
-// viestimään "tämä ei ole enää tuoretta" ilman jatkuvaa piperrystä kartalla.
-const STALE_AFTER_MS = 3 * 60 * 1000; // 3 min
-const STALE_OPACITY = 0.55;
-
-function formatAge(timestamp) {
-  if (!timestamp || !timestamp.toMillis) return "ei tiedossa";
-  const ms = Date.now() - timestamp.toMillis();
-  if (ms < 60 * 1000) return Math.max(0, Math.round(ms / 1000)) + " s sitten";
-  if (ms < 60 * 60 * 1000) return Math.round(ms / (60 * 1000)) + " min sitten";
-  return Math.round(ms / (60 * 60 * 1000)) + " h sitten";
-}
-
-// Päivittää yhden merkin opasiteetin sen datan tuoreuden perusteella. Kutsutaan
-// sekä datan saapuessa että säännöllisesti ajastimella (ks. alempana), koska
-// vanhentuminen tapahtuu ajan kulumisen myötä, ei vain uuden datan myötä.
-function updateMarkerFreshness(uid) {
-  const marker = markers[uid];
-  const data = memberData[uid];
-  if (!marker || !data || !data.updatedAt || !data.updatedAt.toMillis) return;
-  const age = Date.now() - data.updatedAt.toMillis();
-  marker.setOpacity(age > STALE_AFTER_MS ? STALE_OPACITY : 1);
-}
-
-// Popupin sisältö rakennetaan funktiona (Leaflet kutsuu tämän joka kerta kun
-// popup avataan), jotta "X sitten" -teksti on aina tuore eikä vaadi erillistä
-// päivityslogiikkaa taustalla pyörimään koko ajan.
-function buildPopupHtml(uid) {
-  const data = memberData[uid];
-  if (!data) return "";
-  const name = data.name || "Tuntematon";
-  const roleLabel = data.role === "dog" ? "koira" : "ihminen";
-  const accuracyText = typeof data.accuracy === "number"
-    ? "~" + Math.round(data.accuracy) + " m"
-    : "ei tiedossa";
-
-  let html = `<div class="popup-info"><strong>${name} (${roleLabel})</strong><br>` +
-    `Päivitetty: ${formatAge(data.updatedAt)}<br>` +
-    `Tarkkuus: ${accuracyText}`;
-
-  // Akkurivi näkyy vain jos tieto on saatavilla (esim. iOS/Safari ei tue
-  // Battery Status API:a - silloin rivi jää kokonaan pois, ei tyhjää kenttää).
-  if (typeof data.battery === "number") {
-    html += `<br>Akku: ${data.battery} %` + (data.charging ? " (laturissa)" : "");
-  }
-
-  html += `</div>`;
-
-  // Popupin toimintorivi (ks. hauku-etaisyysmittaus-valmistusohje.md).
-  // Yksi yhtenäinen mittaustoiminto: valitaan kaksi jäsentä (oma sijainti
-  // kelpaa yhdeksi niistä), ei erillistä "Etäisyys minuun" -pikanäppäintä -
-  // se aiheutti kaksi päällekkäistä "Lopeta mittaus" -nappia samaan popupiin
-  // kun sama jäsenpari oli mitattu myös yleisen valinnan kautta (korjattu).
-  const actionButtons = [];
-
-  // Kahden mielivaltaisen jäsenen välinen mittaus (vaihe 2, ks.
-  // hauku-etaisyysmittaus-valmistusohje.md) - näkyy kaikilla jäsenillä,
-  // myös omalla merkillä, koska tässä ei mitata etäisyyttä itseensä vaan
-  // valitaan molemmat päätepisteet erikseen kahdessa vaiheessa.
-  let pairLabel, pairClass;
-  if (pendingMeasureFrom === uid) {
-    pairLabel = "Peruuta valinta";
-    pairClass = "popup-btn popup-btn-active";
-  } else if (pendingMeasureFrom === null) {
-    // Jos tällä jäsenellä on jo aktiivinen mittaus toiseen jäseneen, näytetään
-    // suoraan "Lopeta mittaus" - ei pakoteta käyttäjää muistamaan kumman
-    // jäsenen kanssa mittaus on käynnissä ja toistamaan koko valintaa.
-    const existingPair = findPairInvolving(uid);
-    if (existingPair) {
-      pairLabel = "Lopeta mittaus";
-      pairClass = "popup-btn popup-btn-active";
-    } else {
-      pairLabel = "Mittaa toiseen jäseneen";
-      pairClass = "popup-btn";
-    }
-  } else {
-    pairLabel = "Valitse tämä pisteeksi";
-    pairClass = "popup-btn popup-btn-active";
-  }
-  actionButtons.push(`<button type="button" class="${pairClass}" data-action="pair">${pairLabel}</button>`);
-
-  if (actionButtons.length > 0) {
-    html += `<div class="popup-actions">${actionButtons.join("")}</div>`;
-  }
-
-  return html;
-}
-
-let freshnessIntervalId = null;
-
-// Merkkien himmennys pitää päivittyä myös ilman uutta Firestore-dataa (esim.
-// koira on kuuluvuuskuolleella alueella eikä kirjoita mitään pitkään aikaan) -
-// siksi tarkistus ajetaan säännöllisesti eikä vain onSnapshot-tapahtumissa.
-function startFreshnessTicker() {
-  if (freshnessIntervalId !== null) return;
-  freshnessIntervalId = setInterval(() => {
-    Object.keys(markers).forEach(updateMarkerFreshness);
-  }, 30 * 1000);
-}
 
 function startListeningToGroup(db, cfg) {
-  startFreshnessTicker();
-
-  // Jos oma sijainti ei ole vielä saapunut 4 sekunnin kuluttua (esim.
-  // GPS-lupadialogi vielä kesken), sallitaan zoomaus kenen tahansa
-  // ensimmäiseen sijaintiin - ks. fallbackZoomAllowed-kommentti yllä.
-  setTimeout(() => { fallbackZoomAllowed = true; }, 4000);
-
   db.collection("groups").doc(cfg.groupCode).collection("members")
     .onSnapshot((snapshot) => {
       snapshot.docChanges().forEach((change) => {
@@ -911,22 +661,14 @@ function startListeningToGroup(db, cfg) {
         const data = change.doc.data();
         if (!data.lat || !data.lng) return;
 
-        memberData[uid] = data;
-
         const latlng = [data.lat, data.lng];
         const name = data.name || "Tuntematon";
+        const label = `${name} (${data.role === "dog" ? "koira" : "ihminen"})`;
 
         if (change.type === "removed") {
           if (markers[uid]) { map.removeLayer(markers[uid]); delete markers[uid]; }
           if (alertTimers[uid]) { clearTimeout(alertTimers[uid]); delete alertTimers[uid]; }
           delete lastAlertSeen[uid];
-          delete memberData[uid];
-          // Jäsen poistui - mahdolliset kesken olleet mittaukset (kumpaankin
-          // suuntaan) pitää siivota, ettei kartalle jää "orpoa" viivaa
-          // osoittamaan tyhjää. Jos jäsen oli juuri pending-valinnan
-          // ensimmäinen piste, myös se pitää nollata.
-          stopAllMeasurementsInvolving(uid);
-          if (pendingMeasureFrom === uid) pendingMeasureFrom = null;
           return;
         }
 
@@ -935,36 +677,25 @@ function startListeningToGroup(db, cfg) {
         const alertAtMs = data.alertAt && data.alertAt.toMillis ? data.alertAt.toMillis() : null;
         const now = Date.now();
         const isAlertActive = !!alertAtMs && (now - alertAtMs < ALERT_DURATION_MS);
-        const lowBattery = isLowBattery(data);
 
         // Tooltip kertoo hälytyksen sanallisesti ("haukkuu!") - rengas/badge ei jää
         // arvailun varaan siitä mitä se tarkoittaa.
         const tooltipText = isAlertActive ? `${name} 🐕 haukkuu!` : name;
 
         if (markers[uid]) {
-          markers[uid].setLatLng(latlng).setTooltipContent(tooltipText);
-          markers[uid].setIcon(iconFor(data.role, isAlertActive, lowBattery));
+          markers[uid].setLatLng(latlng).setPopupContent(label).setTooltipContent(tooltipText);
+          markers[uid].setIcon(iconFor(data.role, isAlertActive));
         } else {
-          markers[uid] = L.marker(latlng, { icon: iconFor(data.role, isAlertActive, lowBattery) })
+          markers[uid] = L.marker(latlng, { icon: iconFor(data.role, isAlertActive) })
             .addTo(map)
-            .bindPopup(() => buildPopupHtml(uid))
+            .bindPopup(label)
             .bindTooltip(tooltipText, {
               permanent: true,
               direction: "top",
               offset: [0, -22],
               className: "marker-label"
-            })
-            // Popupin sisältö rakennetaan funktiona (buildPopupHtml), joten
-            // toimintorivin nappi pitää sitoa aina kun popup avataan uudelleen -
-            // sama käsittelijä pysyy voimassa koko merkin elinkaaren ajan.
-            .on("popupopen", (e) => {
-              const el = e.popup.getElement();
-              const pairBtn = el && el.querySelector('.popup-btn[data-action="pair"]');
-              if (pairBtn) pairBtn.addEventListener("click", () => handlePairMeasureClick(uid));
             });
         }
-
-        updateMarkerFreshness(uid);
 
         // Uusi hälytys (aikaleima ei ole sama kuin viimeksi käsitelty) - soitetaan
         // äänimerkki (ei omalle laitteelle) ja ajastetaan visuaalisen renkaan/tooltipin
@@ -978,26 +709,14 @@ function startListeningToGroup(db, cfg) {
           const remaining = ALERT_DURATION_MS - (now - alertAtMs);
           alertTimers[uid] = setTimeout(() => {
             if (markers[uid]) {
-              markers[uid].setIcon(iconFor(data.role, false, isLowBattery(memberData[uid] || data)));
+              markers[uid].setIcon(iconFor(data.role, false));
               markers[uid].setTooltipContent(name);
             }
           }, Math.max(remaining, 0));
         }
 
-        // Ensimmäinen zoom kohdistetaan omaan sijaintiin (ei kenen tahansa
-        // ensimmäiseen) - ks. keskustelu 24.7.2026. fallbackZoomAllowed
-        // varmistaa ettei kartta jää jumiin jos oma sijainti viipyy.
-        const isSelfFix = currentAuth?.currentUser?.uid === uid;
-        if (firstFix && (isSelfFix || fallbackZoomAllowed)) {
-          map.setView(latlng, 15);
-          firstFix = false;
-        }
+        if (firstFix) { map.setView(latlng, 15); firstFix = false; }
       });
-
-      // Mikä tahansa sijaintipäivitys (oma tai kohde) voi vaikuttaa käynnissä
-      // oleviin mittauksiin - päivitetään kaikki kerralla erän lopuksi, ei
-      // jokaisen yksittäisen docChange-tapahtuman kohdalla erikseen.
-      updateAllActiveMeasurements();
     }, err => setStatus("Virhe kuunnellessa ryhmää: " + err.message));
 
   db.collection("groups").doc(cfg.groupCode).collection("members")
@@ -1025,187 +744,39 @@ function startListeningToGroup(db, cfg) {
     });
 }
 
-// ---- Etäisyysmittaus omasta sijainnista jäseneen ----
-// Ks. hauku-etaisyysmittaus-valmistusohje.md. Puhtaasti näyttöpuolen
-// ominaisuus - ei Firestore-kirjoitusta/-lukua, hyödyntää dataa joka on jo
-// muutenkin saatavilla (oma ja kohdejäsenen sijainti, molemmat markers-
-// oliossa Firestoren onSnapshot-synkronoituna).
-
-function formatDistance(meters) {
-  if (meters >= 1000) return (meters / 1000).toFixed(1).replace(".", ",") + " km";
-  return Math.round(meters) + " m";
-}
-
-function midpoint(latlng1, latlng2) {
-  return [(latlng1.lat + latlng2.lat) / 2, (latlng1.lng + latlng2.lng) / 2];
-}
-
-function pairKey(uidA, uidB) {
-  return [uidA, uidB].sort().join("__");
-}
-
-function isMeasuringPair(uidA, uidB) {
-  if (!uidA || !uidB || uidA === uidB) return false;
-  return !!activeMeasurements[pairKey(uidA, uidB)];
-}
-
-// Etsii jäsenen uid mahdollisen aktiivisen mittauksen (kumpaan tahansa
-// toiseen jäseneen, oma sijainti mukaan lukien - ei enää erillistä
-// poikkeusta, koska erillinen "Etäisyys minuun" -pikanäppäin poistettiin).
-// Palauttaa mittausolion tai null. Yksi jäsen voi olla mukana vain yhdessä
-// mittauksessa kerrallaan (ks. handlePairMeasureClick), joten haku voi
-// pysähtyä ensimmäiseen osumaan.
-function findPairInvolving(uid) {
-  for (const key in activeMeasurements) {
-    const m = activeMeasurements[key];
-    if (m.a === uid || m.b === uid) return m;
-  }
-  return null;
-}
-
-// Viiva: katkoviiva, lähes läpinäkyvä, neutraali väri (ei koira/ihminen-
-// brändiväri, ettei sekoitu rooliväritykseen) - antaa visuaalisen
-// kontekstin sille mitä lukema tarkoittaa, ks. valmistusohjeen kohta 4.
-// Yleinen kahden mielivaltaisen jäsenen välinen mittaus - "Etäisyys minuun"
-// on tämän erikoistapaus jossa toinen päätepiste on aina oma sijainti.
-function startMeasurementBetween(uidA, uidB) {
-  if (!uidA || !uidB || uidA === uidB) return;
-  if (!markers[uidA] || !markers[uidB]) return;
-  const key = pairKey(uidA, uidB);
-  if (activeMeasurements[key]) return;
-
-  const line = L.polyline(
-    [markers[uidA].getLatLng(), markers[uidB].getLatLng()],
-    { color: "#444444", weight: 2, opacity: 0.35, dashArray: "6,8" }
-  ).addTo(map);
-
-  const labelMarker = L.marker(
-    midpoint(markers[uidA].getLatLng(), markers[uidB].getLatLng()),
-    {
-      icon: L.divIcon({
-        className: "",
-        html: `<div style="display:flex;justify-content:center;width:100%;"><span class="distance-label"></span></div>`,
-        iconSize: [60, 20],
-        iconAnchor: [30, 10]
-      }),
-      interactive: false
-    }
-  ).addTo(map);
-
-  activeMeasurements[key] = { a: uidA, b: uidB, line, labelMarker };
-  updateMeasurementByKey(key);
-}
-
-// Kutsutaan aina kun jonkun jäsenen sijainti päivittyy - ks.
-// startListeningToGroup. Näin viiva ja lukema pysyvät ajan tasalla ilman
-// erillistä ajastinta. Toimii kummankin päätepisteen suhteen, ei vain omaan
-// sijaintiin sidottuna.
-function updateMeasurementByKey(key) {
-  const m = activeMeasurements[key];
-  if (!m) return;
-  if (!markers[m.a] || !markers[m.b]) {
-    stopMeasurementByKey(key);
-    return;
-  }
-  const aLatLng = markers[m.a].getLatLng();
-  const bLatLng = markers[m.b].getLatLng();
-  m.line.setLatLngs([aLatLng, bLatLng]);
-  m.labelMarker.setLatLng(midpoint(aLatLng, bLatLng));
-
-  const meters = haversineMeters(aLatLng.lat, aLatLng.lng, bLatLng.lat, bLatLng.lng);
-  const el = m.labelMarker.getElement();
-  const inner = el && el.querySelector(".distance-label");
-  if (inner) inner.textContent = formatDistance(meters);
-}
-
-function updateAllActiveMeasurements() {
-  Object.keys(activeMeasurements).forEach(updateMeasurementByKey);
-}
-
-function stopMeasurementByKey(key) {
-  const m = activeMeasurements[key];
-  if (!m) return;
-  map.removeLayer(m.line);
-  map.removeLayer(m.labelMarker);
-  delete activeMeasurements[key];
-}
-
-function stopMeasurementBetween(uidA, uidB) {
-  stopMeasurementByKey(pairKey(uidA, uidB));
-}
-
-// Kaikki jäseneen uid liittyvät mittaukset (kumpikin päätepiste voi olla
-// tämä jäsen) - käytetään kun jäsen poistuu ryhmästä, ettei kartalle jää
-// "orpoja" viivoja osoittamaan tyhjää.
-function stopAllMeasurementsInvolving(uid) {
-  Object.keys(activeMeasurements).forEach((key) => {
-    const m = activeMeasurements[key];
-    if (m.a === uid || m.b === uid) stopMeasurementByKey(key);
-  });
-}
-
-function reopenPopupIfOpen(uid) {
-  const marker = markers[uid];
-  if (marker && marker.isPopupOpen()) {
-    marker.closePopup().openPopup();
-  }
-}
-
-// "Etäisyys minuun" -nappi: pikakutsu yleiseen pari-mittaukseen, jossa
-// toinen päätepiste on aina oma sijainti.
-// (Aiempi "Etäisyys minuun" -pikanäppäinfunktio poistettu - ks. huomio
-// buildPopupHtml:ssa. Oma sijainti mitataan nyt samalla yleisellä
-// kahden jäsenen valinnalla kuin mikä tahansa muukin pari.)
-
-// Kahden mielivaltaisen jäsenen välinen mittaus (vaihe 2, ks.
-// hauku-etaisyysmittaus-valmistusohje.md). Valinta tehdään kahdessa
-// vaiheessa popupin kautta: ensin painetaan "Mittaa toiseen jäseneen"
-// jommankumman jäsenen popupista (asettaa pending-tilan), sitten toisen
-// jäsenen popupista "Valitse tämä pisteeksi" (täydentää parin). Sama nappi
-// toimii myös perumiseen (jos painetaan uudelleen kesken valinnan) ja
-// olemassa olevan mittauksen lopettamiseen (jos pari on jo mitattu).
-// Huom: ei käytetä setStatus():ia tässä - se kirjoittaisi GPS-lähetyksen
-// tilarivin päälle. Napin oma teksti ("Peruuta valinta" / "Valitse tämä
-// pisteeksi") riittää kertomaan tilan.
-function handlePairMeasureClick(uid) {
-  if (pendingMeasureFrom === uid) {
-    pendingMeasureFrom = null;
-  } else if (pendingMeasureFrom === null) {
-    // Jos jäsenellä on jo aktiivinen mittaus (napin teksti oli "Lopeta
-    // mittaus"), sammutetaan se suoraan sen sijaan että aloitettaisiin uusi
-    // valinta - ks. findPairInvolving ja buildPopupHtml.
-    const existingPair = findPairInvolving(uid);
-    if (existingPair) {
-      stopMeasurementBetween(existingPair.a, existingPair.b);
-    } else {
-      pendingMeasureFrom = uid;
-    }
-  } else {
-    const fromUid = pendingMeasureFrom;
-    pendingMeasureFrom = null;
-    if (isMeasuringPair(fromUid, uid)) {
-      stopMeasurementBetween(fromUid, uid);
-    } else {
-      startMeasurementBetween(fromUid, uid);
-    }
-    reopenPopupIfOpen(fromUid);
-  }
-  reopenPopupIfOpen(uid);
-}
-
-// ---- Haukkuhälytys (vaihe 1: äänenvoimakkuustunnistus) ----
-// Ks. hauku-haukkuhalytys-valmistusohje.md - pluggable detectSound-rajapinta,
-// jotta vaihe 2 (ML-luokittelu) voidaan liittää myöhemmin korvaamalla vain
-// tämä yksi funktio muun koodin pysyessä koskemattomana.
+// ---- Haukkuhälytys ----
+// Vaihe 1: äänenvoimakkuustunnistus (RMS), laukaisee tarkistuksen.
+// Vaihe 2 (v37): YAMNet binäärisenä vahvistuksena RMS-laukaisulle - vahvistaa
+// vain onko ääni ylipäätään koiran ääntä, EI luokittele äänityyppiä UI:hin.
+// Ks. hauku-haukkuhalytys-valmistusohje.md kohta 7 - tunnetilan/hätätilan
+// erottelu testattiin ja hylättiin (arousal/valenssi-ongelma), joten YAMNet
+// toimii tässä puhtaana väärien positiivien suodattimena, ei luokittelijana.
 
 const LISTEN_KEY = "hauku_listening_v1";
 const ALERT_DURATION_MS = 60 * 1000; // hälytys näkyy tämän ajan viimeisimmästä laukeamisesta
 const ALERT_WRITE_MIN_INTERVAL_MS = 10 * 1000; // ei kirjoiteta Firestoreen useammin kuin tämän välein
 const SOUND_VOLUME_THRESHOLD = 0.35; // 0..1, kiinteä kynnysarvo (päätös: ei asetuksissa säädettävä)
 
+// Vaihe 2 (YAMNet) -vakiot. Kynnysarvo ja indeksit validoitu barkdetection-
+// proto.html-työkalulla kenttätestissä 24.7.2026, ks. valmistusohjeen kohta 7.
+const YAMNET_MODEL_URL = "https://tfhub.dev/google/tfjs-model/yamnet/tfjs/1";
+const YAMNET_SAMPLE_RATE = 16000;
+const YAMNET_WINDOW_SAMPLES = 16000; // ~1s ikkuna
+const YAMNET_DOG_CLASS_INDICES = [70, 71, 72, 73, 74, 75]; // Bark, Yip, Howl, Bow-wow, Growling, Whimper
+const YAMNET_CONFIRM_THRESHOLD = 0.10; // kiinteä, ei asetuksissa säädettävä (sama periaate kuin SOUND_VOLUME_THRESHOLD)
+
 let audioContext = null, analyserNode = null, micStream = null, detectionRafId = null;
 let isListening = false;
 let lastAlertWriteTime = 0;
+
+// Vaihe 2: erillinen ScriptProcessor rakentaa rinnakkaisen 16kHz liukuvan
+// puskurin YAMNet-vahvistusta varten. Ei vaikuta olemassa olevaan RMS-
+// laukaisuun (analyserNode) mitenkään - täysin rinnakkainen putki.
+let yamnetProcessorNode = null, yamnetSilentGain = null;
+let yamnetRollingBuffer = [];
+let yamnetModel = null;
+let yamnetLoadPromise = null;
+let yamnetConfirmInProgress = false;
 
 // Vaihe 1: palauttaa true/false äänenvoimakkuuden (RMS) perusteella.
 // Vaihe 2 (myöhemmin): sama signatuuri, mutta ML-luokittelu sisällä.
@@ -1223,6 +794,70 @@ function detectSound(analyser) {
 
 function isListeningEnabled() {
   return localStorage.getItem(LISTEN_KEY) === "true";
+}
+
+// Lineaarinen interpolointi-alinäytteistys laitteen natiivista taajuudesta
+// 16kHz:iin YAMNetiä varten. Sama periaate kuin barkdetection-proto.html:ssä
+// validoitu - ei alipäästösuodatusta, mutta riittää tähän tarkoitukseen.
+function downsampleTo16k(buffer, inRate) {
+  if (inRate === YAMNET_SAMPLE_RATE) return buffer;
+  const ratio = inRate / YAMNET_SAMPLE_RATE;
+  const newLen = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLen);
+  for (let i = 0; i < newLen; i++) {
+    const pos = i * ratio;
+    const lo = Math.floor(pos);
+    const hi = Math.min(lo + 1, buffer.length - 1);
+    const frac = pos - lo;
+    result[i] = buffer[lo] * (1 - frac) + buffer[hi] * frac;
+  }
+  return result;
+}
+
+// Lataa YAMNet-mallin taustalla vain kerran (myös useampi samanaikainen
+// kutsu odottaa samaa promisea). Kutsutaan heti kun kuuntelu käynnistetään,
+// ei vasta ensimmäisen RMS-laukaisun yhteydessä (ks. valmistusohje kohta 4/7).
+function ensureYamnetLoaded() {
+  if (yamnetModel) return Promise.resolve(yamnetModel);
+  if (yamnetLoadPromise) return yamnetLoadPromise;
+  if (typeof tf === "undefined") {
+    return Promise.reject(new Error("TensorFlow.js ei ole ladattu (tarkista index.html-skriptit)"));
+  }
+  yamnetLoadPromise = tf.loadGraphModel(YAMNET_MODEL_URL, { fromTFHub: true })
+    .then((model) => { yamnetModel = model; return model; })
+    .catch((err) => { yamnetLoadPromise = null; throw err; });
+  return yamnetLoadPromise;
+}
+
+// Vaihe 2: YAMNet binäärisenä vahvistuksena RMS-laukaisulle. Palauttaa vain
+// true/false - EI äänityyppiä (ks. valmistusohje päätös 6.7: tunnetilan
+// erottelu testattu ja hylätty, joten luokkatietoa ei koskaan viedä UI:hin
+// eikä Firestoreen).
+//
+// Tietoinen turvallisuuspäätös: jos malli ei ole vielä latautunut, puskuri
+// on liian lyhyt, tai inferenssi epäonnistuu (esim. verkkokatko metsässä),
+// funktio palauttaa TRUE (hälytys sallitaan siitä huolimatta) - vaihe 1:n
+// RMS-hälytys ei koskaan saa jäädä tulematta YAMNet-vian takia. Parempi
+// ylimääräinen väärä hälytys kuin puuttuva oikea.
+async function confirmDogSound() {
+  if (yamnetRollingBuffer.length < YAMNET_WINDOW_SAMPLES) return true;
+  try {
+    const model = await ensureYamnetLoaded();
+    const windowArr = new Float32Array(yamnetRollingBuffer.slice(-YAMNET_WINDOW_SAMPLES));
+    let maxDogScore = 0;
+    tf.tidy(() => {
+      const waveform = tf.tensor1d(windowArr, "float32");
+      const output = model.predict(waveform); // [scores, embeddings, spectrogram]
+      const scores = Array.isArray(output) ? output[0] : output;
+      const meanScores = scores.mean(0); // keskiarvo kehysten yli -> [521]
+      const data = Array.from(meanScores.dataSync());
+      maxDogScore = Math.max(...YAMNET_DOG_CLASS_INDICES.map((idx) => data[idx] || 0));
+    });
+    return maxDogScore >= YAMNET_CONFIRM_THRESHOLD;
+  } catch (err) {
+    console.error("YAMNet-vahvistus epäonnistui, hälytys sallitaan silti (fail-open):", err);
+    return true;
+  }
 }
 
 function setListeningEnabled(enabled) {
@@ -1277,6 +912,35 @@ function startSoundDetection(db, cfg) {
     analyserNode.fftSize = 2048;
     source.connect(analyserNode);
 
+    // Vaihe 2: rinnakkainen putki joka kerää 16kHz liukuvan puskurin YAMNet-
+    // vahvistusta varten. ScriptProcessorNode on deprecated mutta yksinkertaisin
+    // laajasti tuettu ratkaisu - ei kuulu kaiuttimeen (gain=0), ei vaikuta RMS-
+    // laukaisuun (analyserNode) mitenkään.
+    yamnetProcessorNode = audioContext.createScriptProcessor(4096, 1, 1);
+    yamnetSilentGain = audioContext.createGain();
+    yamnetSilentGain.gain.value = 0;
+    const nativeRate = audioContext.sampleRate;
+    yamnetProcessorNode.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      const resampled = downsampleTo16k(input, nativeRate);
+      for (let i = 0; i < resampled.length; i++) yamnetRollingBuffer.push(resampled[i]);
+      const maxKeep = Math.round(YAMNET_WINDOW_SAMPLES * 1.5);
+      if (yamnetRollingBuffer.length > maxKeep) {
+        yamnetRollingBuffer.splice(0, yamnetRollingBuffer.length - maxKeep);
+      }
+    };
+    source.connect(yamnetProcessorNode);
+    yamnetProcessorNode.connect(yamnetSilentGain);
+    yamnetSilentGain.connect(audioContext.destination);
+
+    // Käynnistä mallin lataus taustalla heti, ei vasta ensimmäisen laukaisun
+    // yhteydessä (päätös, ks. valmistusohje kohta 4/7) - jos lataus epäonnistuu
+    // (esim. ei verkkoa metsässä), confirmDogSound() epäonnistuu myöhemmin
+    // hallitusti ja sallii hälytyksen silti (fail-open).
+    ensureYamnetLoaded().catch((err) => {
+      console.error("YAMNetin ennakkolataus epäonnistui (jatketaan silti, fail-open):", err);
+    });
+
     isListening = true;
     setListeningEnabled(true);
     setListenButtonLabel(true);
@@ -1285,9 +949,19 @@ function startSoundDetection(db, cfg) {
       if (!isListening) return;
       if (detectSound(analyserNode)) {
         const now = Date.now();
-        if (now - lastAlertWriteTime > ALERT_WRITE_MIN_INTERVAL_MS) {
+        if (now - lastAlertWriteTime > ALERT_WRITE_MIN_INTERVAL_MS && !yamnetConfirmInProgress) {
+          // Asetetaan heti, jottei toistuva RMS-laukaisu (esim. jatkuva tuuli)
+          // käynnistä useita päällekkäisiä/toistuvia YAMNet-tarkistuksia.
           lastAlertWriteTime = now;
-          writeAlert(db, cfg);
+          yamnetConfirmInProgress = true;
+          confirmDogSound().then((confirmed) => {
+            yamnetConfirmInProgress = false;
+            if (confirmed) {
+              writeAlert(db, cfg);
+            }
+            // else: YAMNet arvioi RMS-laukaisun vääräksi positiiviksi (esim.
+            // tuuli/kohina) - ei kirjoiteta, ei muuta UI:ta.
+          });
         }
       }
       detectionRafId = requestAnimationFrame(loop);
@@ -1304,6 +978,10 @@ function stopSoundDetection() {
   if (detectionRafId !== null) cancelAnimationFrame(detectionRafId);
   detectionRafId = null;
   if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+  if (yamnetProcessorNode) { yamnetProcessorNode.disconnect(); yamnetProcessorNode.onaudioprocess = null; yamnetProcessorNode = null; }
+  if (yamnetSilentGain) { yamnetSilentGain.disconnect(); yamnetSilentGain = null; }
+  yamnetRollingBuffer = [];
+  yamnetConfirmInProgress = false;
   if (audioContext) { audioContext.close(); audioContext = null; }
   analyserNode = null;
   setListenButtonLabel(false);
@@ -1330,7 +1008,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v46";
+const APP_VERSION = "v37";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan

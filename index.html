@@ -3,17 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<link rel="icon" type="image/png" href="icon-mark.png?v=1">
-<link rel="apple-touch-icon" href="icon-mark.png?v=1">
+<link rel="icon" type="image/png" href="logo.png?v=2">
 <title>Hauku</title>
-<meta name="description" content="Ryhmäpohjainen, reaaliaikainen sijainninjako koirille ja ihmisille.">
-<meta property="og:title" content="Hauku">
-<meta property="og:description" content="Ryhmäpohjainen, reaaliaikainen sijainninjako koirille ja ihmisille.">
-<meta property="og:image" content="https://vesa-fioni.github.io/preview-mark.png">
-<meta property="og:type" content="website">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Hauku">
-<meta name="twitter:image" content="https://vesa-fioni.github.io/preview-mark.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <style>
   :root {
@@ -201,17 +192,6 @@
     font-size: 11px; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
   }
 
-  /* Akkuvaroitusbadge (näkyy vain kun akku on kriittisen alhaalla eikä
-     laturissa) - eri kulma ja väri kuin haukkuhälytyksen badge, jotta niitä
-     ei sekoita keskenään. Piilotetaan hälytyksen ajaksi ettei kaksi badgea
-     kilpaile huomiosta samaan aikaan. */
-  .battery-badge {
-    position: absolute; bottom: -3px; left: -3px;
-    background: #f59e0b; color: white; border-radius: 50%;
-    width: 19px; height: 19px; display: flex; align-items: center; justify-content: center;
-    font-size: 11px; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
-  }
-
   .marker-label {
     background: rgba(255,255,255,0.95);
     border: none;
@@ -223,58 +203,6 @@
     box-shadow: 0 1px 4px rgba(0,0,0,0.25);
   }
   .marker-label::before { display: none; } /* piilota Leafletin oletusnuoli */
-
-  /* Popupin sisältö (jäsenen lisätiedot: päivitysaika, tarkkuus, akku) */
-  .popup-info { font-size: 13px; line-height: 1.6; }
-  .popup-info strong { font-size: 14px; }
-
-  /* Popupin toimintorivi (ks. hauku-etaisyysmittaus-valmistusohje.md) -
-     rakenteellisesti valmis useammalle toiminnolle. Napit pinotaan allekkain
-     (flex-column + gap), koska yhdellä jäsenellä voi olla useampi toiminto
-     yhtä aikaa näkyvissä (esim. "Etäisyys minuun" ja "Mittaa toiseen
-     jäseneen"). */
-  .popup-actions {
-    margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;
-    display: flex; flex-direction: column; gap: 6px;
-  }
-  .popup-btn {
-    width: 100%; padding: 8px; border: none; border-radius: 6px;
-    background: var(--forest); color: white;
-    font-size: 13px; font-weight: 700; cursor: pointer;
-  }
-  /* Aktiivinen/kesken oleva tila (mittaus käynnissä tai valinta kesken) -
-     sama periaate kuin Kuuntele ääntä -napin oranssi väri, jotta "kesken
-     oleva toiminto" tunnistaa saman värikielen kautta koko sovelluksessa. */
-  .popup-btn-active { background: var(--orange); }
-
-  /* Etäisyysmittauksen lukema kartalla, viivan keskikohdassa - selkeästi
-     pienempi kuin jäsenten nimilaput (marker-label), jotta se ei kilpaile
-     huomiosta itse kohteiden kanssa. Viiva itsessään (piirretty Leafletin
-     polyline-optioilla, ei CSS:llä) kertoo mistä kahdesta pisteestä lukema
-     on kyse. */
-  .distance-label {
-    display: inline-block;
-    background: rgba(255,255,255,0.85);
-    border-radius: 4px;
-    padding: 1px 6px;
-    font-size: 10px;
-    font-weight: 600;
-    color: #444;
-    white-space: nowrap;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
-  }
-
-  /* "Keskitä minuun" -nappi (bottomright) - sama visuaalinen tyyli kuin
-     Leafletin oma zoom-kontrolli (leaflet-bar), jotta se ei erotu
-     ylimääräisenä efektinä vaan tuntuu osalta kartan omaa käyttöliittymää. */
-  .locate-control a {
-    display: flex; align-items: center; justify-content: center;
-    width: 30px; height: 30px;
-    font-size: 18px; color: var(--forest);
-    text-decoration: none;
-    background: white;
-  }
-  .locate-control a:hover { background: #f4f4f4; }
 </style>
 </head>
 <body>
@@ -309,6 +237,9 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="shared.js?v=46"></script>
+  <!-- Haukkuhälytys vaihe 2 (v37): YAMNet-vahvistus RMS-laukaisulle, ks.
+       hauku-haukkuhalytys-valmistusohje.md kohta 7 -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js" crossorigin="anonymous"></script>
+  <script src="shared.js?v=37"></script>
 </body>
 </html>
