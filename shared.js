@@ -363,7 +363,12 @@ function setMapStyle(style) {
   tileLayer = L.tileLayer(conf.url, conf.options).addTo(map);
 }
 
-function iconFor(role, alertActive) {
+// Akkuvaroituksen kynnys - badge näkyy vain tämän alapuolella eikä silloin
+// kun puhelin on laturissa (ks. keskustelu: exception-based näyttö, ei
+// jatkuvaa akkulukemaa kartalla).
+const LOW_BATTERY_THRESHOLD = 20;
+
+function iconFor(role, alertActive, lowBattery) {
   const SIZE = 37; // 80% aiemmasta 46px:stä
   // Omat brändi-ikonit (koira/ihminen) - väritetty roolin mukaisesti
   // (koira=oranssi, ihminen=vihreä, ks. whitepaper kohta 12).
@@ -373,6 +378,11 @@ function iconFor(role, alertActive) {
   const badge = alertActive
     ? `<div class="alert-badge" title="Haukkuu">🔊</div>`
     : "";
+  // Akkubadge piilotetaan haukkuhälytyksen ajaksi, ettei kaksi badgea
+  // kilpaile huomiosta samanaikaisesti - hälytys on aina tärkeämpi.
+  const batteryBadge = (!alertActive && lowBattery)
+    ? `<div class="battery-badge" title="Akku vähissä">🔋</div>`
+    : "";
   return L.divIcon({
     className: "",
     html: `
@@ -381,15 +391,47 @@ function iconFor(role, alertActive) {
         <img src="${src}" alt="" style="width:100%;height:100%;object-fit:contain;
                     filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6));">
         ${badge}
+        ${batteryBadge}
       </div>`,
     iconSize: [SIZE, SIZE],
     iconAnchor: [SIZE / 2, SIZE / 2]
   });
 }
 
+function isLowBattery(data) {
+  return typeof data.battery === "number" && data.battery <= LOW_BATTERY_THRESHOLD && !data.charging;
+}
+
 let currentDb = null, currentAuth = null, currentCfg = null;
 let isSending = false;
 let autoStopTimerId = null;
+
+// Akkutaso luetaan Battery Status API:sta (navigator.getBattery) jos selain
+// tukee sitä - käytännössä Chrome/Samsung Internet Androidilla, ei Safari/iOS.
+// Ei kirjoiteta Firestoreen omana erillisenä kirjoituksenaan, vaan sisällytetään
+// samaan memberRef.set()-kutsuun kuin sijainti (startSendingLocation), koska
+// Firestore-säännöt vaativat lat/lng/updatedAt-kentät jokaisessa kirjoituksessa
+// (ks. whitepaper kohta 9) - erillinen pelkkä akkukirjoitus hylättäisiin.
+// batteryManager-oliota luetaan synkronisesti jokaisen GPS-kirjoituksen
+// yhteydessä, joten arvo pysyy ajan tasalla ilman erillisiä event-kuuntelijoita.
+let batteryManager = null;
+
+function initBatteryManager() {
+  if (!navigator.getBattery) return; // ei tuettu (esim. iOS/Safari) - ei kriittistä
+  navigator.getBattery().then((battery) => {
+    batteryManager = battery;
+  }).catch(() => {
+    // Ei kriittistä - popup vain ei näytä akkuriviä tällä laitteella.
+  });
+}
+
+function currentBatteryFields() {
+  if (!batteryManager) return {};
+  return {
+    battery: Math.round(batteryManager.level * 100),
+    charging: !!batteryManager.charging
+  };
+}
 
 const PAUSE_KEY = "hauku_paused_v1";
 
@@ -463,6 +505,8 @@ function startPackTracker(cfg) {
   currentCfg = cfg;
 
   setStatus("Kirjaudutaan sisään...");
+
+  initBatteryManager();
 
   auth.signInAnonymously().then(() => {
     setStatus("Yhdistetty ryhmään: " + cfg.groupCode);
@@ -587,7 +631,8 @@ function startSendingLocation(db, auth, cfg) {
       role: cfg.role,
       name: cfg.name,
       updatedAt: firebase.firestore.Timestamp.now(),
-      expiresAt
+      expiresAt,
+      ...currentBatteryFields()
     }, { merge: true });
 
     // Jälki (track) tallennetaan vain koiramoodissa - metsästäjän reittiä ei ole tarpeen seurata.
@@ -652,8 +697,75 @@ function filterImplausibleJumps(points) {
 
 let alertTimers = {};    // uid -> timeoutId (visuaalisen renkaan sammutus)
 let lastAlertSeen = {};  // uid -> alertAt (ms) - viimeksi reagoitu hälytysaikaleima
+let memberData = {};     // uid -> viimeisin Firestore-data, popupin ja vanhentumislaskennan pohjaksi
+
+// Kynnys, jonka jälkeen merkki himmennetään merkiksi vanhentuneesta datasta
+// (esim. koira taustalla / ruutu sammunut, ks. whitepaper kohta 14.1). Ei
+// tekstiä pysyvään tooltippiin - pelkkä visuaalinen himmennys riittää
+// viestimään "tämä ei ole enää tuoretta" ilman jatkuvaa piperrystä kartalla.
+const STALE_AFTER_MS = 3 * 60 * 1000; // 3 min
+const STALE_OPACITY = 0.55;
+
+function formatAge(timestamp) {
+  if (!timestamp || !timestamp.toMillis) return "ei tiedossa";
+  const ms = Date.now() - timestamp.toMillis();
+  if (ms < 60 * 1000) return Math.max(0, Math.round(ms / 1000)) + " s sitten";
+  if (ms < 60 * 60 * 1000) return Math.round(ms / (60 * 1000)) + " min sitten";
+  return Math.round(ms / (60 * 60 * 1000)) + " h sitten";
+}
+
+// Päivittää yhden merkin opasiteetin sen datan tuoreuden perusteella. Kutsutaan
+// sekä datan saapuessa että säännöllisesti ajastimella (ks. alempana), koska
+// vanhentuminen tapahtuu ajan kulumisen myötä, ei vain uuden datan myötä.
+function updateMarkerFreshness(uid) {
+  const marker = markers[uid];
+  const data = memberData[uid];
+  if (!marker || !data || !data.updatedAt || !data.updatedAt.toMillis) return;
+  const age = Date.now() - data.updatedAt.toMillis();
+  marker.setOpacity(age > STALE_AFTER_MS ? STALE_OPACITY : 1);
+}
+
+// Popupin sisältö rakennetaan funktiona (Leaflet kutsuu tämän joka kerta kun
+// popup avataan), jotta "X sitten" -teksti on aina tuore eikä vaadi erillistä
+// päivityslogiikkaa taustalla pyörimään koko ajan.
+function buildPopupHtml(uid) {
+  const data = memberData[uid];
+  if (!data) return "";
+  const name = data.name || "Tuntematon";
+  const roleLabel = data.role === "dog" ? "koira" : "ihminen";
+  const accuracyText = typeof data.accuracy === "number"
+    ? "~" + Math.round(data.accuracy) + " m"
+    : "ei tiedossa";
+
+  let html = `<div class="popup-info"><strong>${name} (${roleLabel})</strong><br>` +
+    `Päivitetty: ${formatAge(data.updatedAt)}<br>` +
+    `Tarkkuus: ${accuracyText}`;
+
+  // Akkurivi näkyy vain jos tieto on saatavilla (esim. iOS/Safari ei tue
+  // Battery Status API:a - silloin rivi jää kokonaan pois, ei tyhjää kenttää).
+  if (typeof data.battery === "number") {
+    html += `<br>Akku: ${data.battery} %` + (data.charging ? " (laturissa)" : "");
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+let freshnessIntervalId = null;
+
+// Merkkien himmennys pitää päivittyä myös ilman uutta Firestore-dataa (esim.
+// koira on kuuluvuuskuolleella alueella eikä kirjoita mitään pitkään aikaan) -
+// siksi tarkistus ajetaan säännöllisesti eikä vain onSnapshot-tapahtumissa.
+function startFreshnessTicker() {
+  if (freshnessIntervalId !== null) return;
+  freshnessIntervalId = setInterval(() => {
+    Object.keys(markers).forEach(updateMarkerFreshness);
+  }, 30 * 1000);
+}
 
 function startListeningToGroup(db, cfg) {
+  startFreshnessTicker();
+
   db.collection("groups").doc(cfg.groupCode).collection("members")
     .onSnapshot((snapshot) => {
       snapshot.docChanges().forEach((change) => {
@@ -661,14 +773,16 @@ function startListeningToGroup(db, cfg) {
         const data = change.doc.data();
         if (!data.lat || !data.lng) return;
 
+        memberData[uid] = data;
+
         const latlng = [data.lat, data.lng];
         const name = data.name || "Tuntematon";
-        const label = `${name} (${data.role === "dog" ? "koira" : "ihminen"})`;
 
         if (change.type === "removed") {
           if (markers[uid]) { map.removeLayer(markers[uid]); delete markers[uid]; }
           if (alertTimers[uid]) { clearTimeout(alertTimers[uid]); delete alertTimers[uid]; }
           delete lastAlertSeen[uid];
+          delete memberData[uid];
           return;
         }
 
@@ -677,18 +791,19 @@ function startListeningToGroup(db, cfg) {
         const alertAtMs = data.alertAt && data.alertAt.toMillis ? data.alertAt.toMillis() : null;
         const now = Date.now();
         const isAlertActive = !!alertAtMs && (now - alertAtMs < ALERT_DURATION_MS);
+        const lowBattery = isLowBattery(data);
 
         // Tooltip kertoo hälytyksen sanallisesti ("haukkuu!") - rengas/badge ei jää
         // arvailun varaan siitä mitä se tarkoittaa.
         const tooltipText = isAlertActive ? `${name} 🐕 haukkuu!` : name;
 
         if (markers[uid]) {
-          markers[uid].setLatLng(latlng).setPopupContent(label).setTooltipContent(tooltipText);
-          markers[uid].setIcon(iconFor(data.role, isAlertActive));
+          markers[uid].setLatLng(latlng).setTooltipContent(tooltipText);
+          markers[uid].setIcon(iconFor(data.role, isAlertActive, lowBattery));
         } else {
-          markers[uid] = L.marker(latlng, { icon: iconFor(data.role, isAlertActive) })
+          markers[uid] = L.marker(latlng, { icon: iconFor(data.role, isAlertActive, lowBattery) })
             .addTo(map)
-            .bindPopup(label)
+            .bindPopup(() => buildPopupHtml(uid))
             .bindTooltip(tooltipText, {
               permanent: true,
               direction: "top",
@@ -696,6 +811,8 @@ function startListeningToGroup(db, cfg) {
               className: "marker-label"
             });
         }
+
+        updateMarkerFreshness(uid);
 
         // Uusi hälytys (aikaleima ei ole sama kuin viimeksi käsitelty) - soitetaan
         // äänimerkki (ei omalle laitteelle) ja ajastetaan visuaalisen renkaan/tooltipin
@@ -709,7 +826,7 @@ function startListeningToGroup(db, cfg) {
           const remaining = ALERT_DURATION_MS - (now - alertAtMs);
           alertTimers[uid] = setTimeout(() => {
             if (markers[uid]) {
-              markers[uid].setIcon(iconFor(data.role, false));
+              markers[uid].setIcon(iconFor(data.role, false, isLowBattery(memberData[uid] || data)));
               markers[uid].setTooltipContent(name);
             }
           }, Math.max(remaining, 0));
@@ -881,7 +998,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v36";
+const APP_VERSION = "v37";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan

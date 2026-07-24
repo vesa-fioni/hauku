@@ -192,6 +192,17 @@
     font-size: 11px; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
   }
 
+  /* Akkuvaroitusbadge (näkyy vain kun akku on kriittisen alhaalla eikä
+     laturissa) - eri kulma ja väri kuin haukkuhälytyksen badge, jotta niitä
+     ei sekoita keskenään. Piilotetaan hälytyksen ajaksi ettei kaksi badgea
+     kilpaile huomiosta samaan aikaan. */
+  .battery-badge {
+    position: absolute; bottom: -3px; left: -3px;
+    background: #f59e0b; color: white; border-radius: 50%;
+    width: 19px; height: 19px; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+
   .marker-label {
     background: rgba(255,255,255,0.95);
     border: none;
@@ -203,6 +214,10 @@
     box-shadow: 0 1px 4px rgba(0,0,0,0.25);
   }
   .marker-label::before { display: none; } /* piilota Leafletin oletusnuoli */
+
+  /* Popupin sisältö (jäsenen lisätiedot: päivitysaika, tarkkuus, akku) */
+  .popup-info { font-size: 13px; line-height: 1.6; }
+  .popup-info strong { font-size: 14px; }
 </style>
 </head>
 <body>
@@ -237,6 +252,6 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="shared.js?v=36"></script>
+  <script src="shared.js?v=37"></script>
 </body>
 </html>
