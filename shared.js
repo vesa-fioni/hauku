@@ -14,6 +14,17 @@ const CONFIG_KEY = "hauku_config_v1";
 const MAX_ACCURACY_METERS = 100;
 const MAX_CONSECUTIVE_ACCURACY_REJECTS = 3;
 
+// Jäljen katkaisu pitkän aikavälin jälkeen (v48): nopeussuodatin (ks. alla)
+// katsoo vain matka/aika-suhdetta, ei koskaan sitä onko aikaväli itsessään
+// järjetön. Jos kirjoitusten välissä on pitkä tauko (sovellus pysäytetty,
+// puhelin taustalla, tai siirrytty autolla toiselle paikkakunnalle kahden
+// kirjoituksen välissä), laskettu nopeus voi näyttää täysin uskottavalta
+// vaikka etäisyys olisi satoja kilometrejä - koska aikaakin oli paljon.
+// Tästä syystä pitkän tauon jälkeinen piste ei koskaan yhdisty viivalla
+// edelliseen, riippumatta lasketusta nopeudesta - emme tiedä mitä reittiä
+// pitkin siirtymä todellisuudessa tapahtui.
+const MAX_GAP_MS = 20 * 60 * 1000; // 20 min
+
 // ---- Config: lataus, tallennus, URL-oletukset ----
 
 function loadConfig() {
@@ -740,11 +751,22 @@ function startSendingLocation(db, auth, cfg) {
 
 function filterImplausibleJumps(points) {
   // points: [{lat, lng, timeMs, accuracy}, ...] aikajärjestyksessä.
-  // Sama logiikka kuin kirjoitusvaiheessa: hylätään pisteet joihin siirtyminen
-  // edellisestä hyväksytystä pisteestä vaatisi epärealistisen nopeuden, sekä
-  // pisteet joiden GPS-tarkkuus on liian huono (ks. MAX_ACCURACY_METERS).
+  // Palauttaa TAULUKON SEGMENTTEJÄ (array of point-array), ei enää yhtä
+  // yhtenäistä pistelistaa - ks. MAX_GAP_MS-vakion selitys yllä. Kutsuvan
+  // koodin (trails[uid].setLatLngs) pitää käyttää Leafletin multi-polyline-
+  // muotoa, jotta segmenttien väliin ei piirry viivaa.
+  //
+  // Kaksi erillistä, riippumatonta syytä katkaista/hylätä piste:
+  // 1) GPS-tarkkuus liian huono (MAX_ACCURACY_METERS) - piste ohitetaan
+  //    kokonaan, ei aloiteta uutta segmenttiä (odotetaan parempaa pistettä).
+  // 2) Aikaväli edelliseen hyväksyttyyn pisteeseen ylittää MAX_GAP_MS -
+  //    pistettä EI hylätä, mutta se aloittaa UUDEN segmentin sen sijaan
+  //    että yhdistyisi viivalla edelliseen (emme tiedä reittiä pitkin
+  //    siirtymä tapahtui). Tämä on eri tarkistus kuin nopeussuodatin, ja
+  //    ajetaan AINA ennen nopeuslaskentaa, koska nopeuslaskenta itsessään
+  //    ei ole luotettava enää tarpeeksi pitkän aikavälin jälkeen.
   const MAX_SPEED_MPS = 55; // ~200 km/h
-  const filtered = [];
+  const segments = [[]];
   let last = null;
   let consecutiveAccuracyRejects = 0;
 
@@ -759,21 +781,30 @@ function filterImplausibleJumps(points) {
     consecutiveAccuracyRejects = 0;
 
     if (!last) {
-      filtered.push(p);
+      segments[segments.length - 1].push(p);
       last = p;
       continue;
     }
+
+    const gapMs = p.timeMs - last.timeMs;
+    if (gapMs > MAX_GAP_MS) {
+      // Liian pitkä tauko - ei yhdistetä viivalla, aloitetaan uusi segmentti.
+      segments.push([p]);
+      last = p;
+      continue;
+    }
+
     const distance = haversineMeters(last.lat, last.lng, p.lat, p.lng);
-    const elapsedSec = (p.timeMs - last.timeMs) / 1000;
+    const elapsedSec = gapMs / 1000;
     const speed = elapsedSec > 0 ? distance / elapsedSec : 0;
 
     if (distance > 50 && speed > MAX_SPEED_MPS) {
       continue; // ohitetaan epäuskottava hyppy, ei päivitetä 'last':ia
     }
-    filtered.push(p);
+    segments[segments.length - 1].push(p);
     last = p;
   }
-  return filtered;
+  return segments.filter(seg => seg.length > 0);
 }
 
 let alertTimers = {};    // uid -> timeoutId (visuaalisen renkaan sammutus)
@@ -1018,8 +1049,12 @@ function startListeningToGroup(db, cfg) {
               accuracy: d.data().accuracy,
               timeMs: d.data().timestamp?.toMillis ? d.data().timestamp.toMillis() : 0
             }));
-            const cleaned = filterImplausibleJumps(rawPoints);
-            trails[uid].setLatLngs(cleaned.map(p => [p.lat, p.lng]));
+            // filterImplausibleJumps palauttaa nyt segmenttien taulukon
+            // (ks. MAX_GAP_MS) - Leafletin multi-polyline-muoto piirtää
+            // jokaisen segmentin erillisenä viivana ilman että segmenttien
+            // väliin (pitkän tauon yli) piirtyy yhdistävää viivaa.
+            const segments = filterImplausibleJumps(rawPoints);
+            trails[uid].setLatLngs(segments.map(seg => seg.map(p => [p.lat, p.lng])));
           });
       });
     });
@@ -1457,7 +1492,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v47";
+const APP_VERSION = "v48";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
