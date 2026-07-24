@@ -23,6 +23,12 @@
     max-width: 480px;
     margin: 0 auto;
   }
+  .version-bar {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--forest); color: white;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
+    text-align: center; padding: 5px 0; margin: -16px -16px 14px;
+  }
   h1 { font-size: 18px; color: var(--forest); margin: 8px 0 2px; }
   .subtitle { font-size: 12px; color: #666; margin: 0 0 14px; line-height: 1.4; }
 
@@ -85,6 +91,8 @@
 </head>
 <body>
 
+  <div class="version-bar" id="versionBar">Versio –</div>
+
   <h1>🐕 Haukkuhälytys-prototyyppi</h1>
   <p class="subtitle">
     Itsenäinen testityökalu YAMNet-mallin (TensorFlow.js) kokeiluun oikean koiran
@@ -145,6 +153,7 @@
     <h2>Loki</h2>
     <div id="log"></div>
     <button id="downloadLogBtn" class="btn btn-secondary" style="margin-top:8px;">Lataa loki (.csv)</button>
+    <button id="copyLogBtn" class="btn btn-secondary" style="margin-top:6px;">Kopioi loki leikepöydälle</button>
     <button id="clearLogBtn" class="btn btn-secondary" style="margin-top:6px;">Tyhjennä loki</button>
   </div>
 
@@ -171,6 +180,11 @@
   //   interpoloinnilla ilman alipäästösuodatusta - riittää karkeaan
   //   testaukseen, mutta ei ole täysin aliasing-vapaa.
   // ---------------------------------------------------------------
+
+  // Nosta tätä JOKA KERTA kun tiedostoa muutetaan - näkyy otsikossa ja lokin
+  // ensimmäisellä rivillä, jotta näet suoraan onko githack.com tarjoillut
+  // vanhan cachetun version vai tuoreimman.
+  const PROTO_VERSION = 'v3';
 
   const MODEL_URL = 'https://tfhub.dev/google/tfjs-model/yamnet/tfjs/1';
   const CLASS_MAP_URL = 'https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv';
@@ -384,7 +398,10 @@
         const output = model.predict(waveform); // [scores, embeddings, spectrogram]
         const scores = Array.isArray(output) ? output[0] : output;
         const meanScores = scores.mean(0); // keskiarvo kehysten yli -> [521]
-        const data = meanScores.dataSync();
+        // Array.from(): dataSync() palauttaa Float32Array:n, jonka .map()
+        // pakottaa paluuarvot takaisin luvuiksi - [i, v]-parit hajoaisivat
+        // ilman tätä muunnosta tavalliseksi JS-arrayksi.
+        const data = Array.from(meanScores.dataSync());
         updateUI(data);
       });
     } catch (err) {
@@ -455,6 +472,33 @@
     URL.revokeObjectURL(url);
   });
 
+  document.getElementById('copyLogBtn').addEventListener('click', async () => {
+    const header = 'aika\ttyyppi\tteksti\n';
+    const rows = logEntries.map(e => `${e.t}\t${e.type}\t${e.text}`).join('\n');
+    const text = header + rows;
+    const btn = document.getElementById('copyLogBtn');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Vanhempi fallback: näkymätön textarea + document.execCommand
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      const orig = btn.textContent;
+      btn.textContent = 'Kopioitu!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    } catch (err) {
+      addLogEntry('sys', 'Kopiointi leikepöydälle epäonnistui: ' + err.message);
+    }
+  });
+
   document.getElementById('clearLogBtn').addEventListener('click', () => {
     logEntries.length = 0;
     document.getElementById('log').innerHTML = '';
@@ -462,6 +506,8 @@
   });
 
   // ---- Alustus ----
+  document.getElementById('versionBar').textContent = 'Versio ' + PROTO_VERSION;
+  addLogEntry('sys', `Sivu ladattu, versio ${PROTO_VERSION}.`);
   buildDogBars();
   </script>
 </body>
