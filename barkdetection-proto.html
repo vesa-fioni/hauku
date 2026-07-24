@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Haukkuhälytys-prototyyppi (YAMNet-testi)</title>
+<style>
+  :root {
+    --forest: #1b4332;
+    --forest-dark: #10291f;
+    --orange: #f97316;
+    --orange-dark: #ea6a0a;
+    --cream: #f7f5f0;
+    --red: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--cream);
+    color: #222;
+    margin: 0;
+    padding: 16px;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 18px; color: var(--forest); margin: 8px 0 2px; }
+  .subtitle { font-size: 12px; color: #666; margin: 0 0 14px; line-height: 1.4; }
+
+  .disclaimer {
+    background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px;
+    padding: 10px 12px; font-size: 12px; color: #7c2d12; line-height: 1.5;
+    margin-bottom: 16px;
+  }
+
+  .card {
+    background: white; border-radius: 12px; padding: 16px; margin-bottom: 14px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+
+  #statusText { font-size: 13px; color: #555; margin: 6px 0; min-height: 18px; }
+
+  .btn {
+    width: 100%; padding: 13px; border: none; border-radius: 9px;
+    font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 4px;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--forest), var(--forest-dark)); color: white; }
+  .btn-stop { background: var(--red); color: white; }
+  .btn-secondary {
+    background: #f3f4f6; color: #222; border: 1px solid #ddd;
+    font-size: 13px; font-weight: 600; padding: 8px;
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .threshold-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .threshold-row label { font-size: 12px; color: #555; flex-shrink: 0; }
+  .threshold-row input[type="range"] { flex: 1; }
+  .threshold-val { font-size: 12px; font-weight: 700; color: var(--forest); width: 36px; text-align: right; }
+
+  .bar-row { margin: 9px 0; }
+  .bar-label {
+    display: flex; justify-content: space-between; font-size: 12px;
+    color: #444; margin-bottom: 3px;
+  }
+  .bar-label .score { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .bar-track { background: #eee; border-radius: 5px; height: 10px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 5px; transition: width 0.15s ease; width: 0%; }
+
+  .overall-list { font-size: 12px; color: #555; line-height: 1.7; margin-top: 4px; }
+  .overall-list span.name { color: #222; }
+  .overall-list span.pct { font-weight: 700; color: var(--forest); float: right; }
+
+  .tag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+
+  #log {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px; background: #fafafa; border: 1px solid #eee; border-radius: 8px;
+    padding: 8px; height: 180px; overflow-y: auto; line-height: 1.6;
+  }
+  #log .entry-auto { color: #444; }
+  #log .entry-tag { color: var(--orange-dark); font-weight: 700; }
+  #log .entry-sys { color: #999; }
+
+  h2 { font-size: 13px; color: var(--forest); margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.03em; }
+</style>
+</head>
+<body>
+
+  <h1>🐕 Haukkuhälytys-prototyyppi</h1>
+  <p class="subtitle">
+    Itsenäinen testityökalu YAMNet-mallin (TensorFlow.js) kokeiluun oikean koiran
+    äänellä. Ei liity Hauku-sovellukseen mitenkään suoraan – tarkoitus on selvittää
+    onko luokittelusta ylipäätään hyötyä ennen mahdollista integrointia.
+  </p>
+
+  <div class="disclaimer">
+    <strong>Muista:</strong> tämä on testityökalu, ei tuotantovalmis eikä
+    turvallisuuskriittinen. Perus-YAMNetin tarkkuus voi olla huomattavasti
+    heikompi sotkuisessa metsäympäristössä (tuuli, useita samanaikaisia
+    äänilähteitä) kuin puhtaassa äänessä. Testaa nimenomaan oikeissa olosuhteissa
+    (valjaan tasku, tuuli, taustaäänet) – ei vain hiljaisessa huoneessa.
+  </div>
+
+  <div class="card">
+    <h2>Malli</h2>
+    <div id="statusText">Ei ladattu.</div>
+    <button id="loadBtn" class="btn btn-primary">Lataa YAMNet-malli</button>
+  </div>
+
+  <div class="card">
+    <h2>Kuuntelu</h2>
+    <button id="listenBtn" class="btn btn-primary" disabled>Aloita kuuntelu</button>
+    <div class="threshold-row">
+      <label for="thresholdSlider">Lokikynnys</label>
+      <input type="range" id="thresholdSlider" min="0.02" max="0.6" step="0.01" value="0.10">
+      <span class="threshold-val" id="thresholdVal">0.10</span>
+    </div>
+    <div style="font-size:11px; color:#999; margin-top:4px;">
+      Kynnys vaikuttaa vain automaattiseen lokiin alla – ei tunnistuksen itsensä laukaisuun.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Koiraluokat (YAMNet, keskiarvo ~1s ikkunasta)</h2>
+    <div id="dogBars"></div>
+  </div>
+
+  <div class="card">
+    <h2>Top 5 kaikista 521 luokasta</h2>
+    <div class="overall-list" id="overallList">–</div>
+  </div>
+
+  <div class="card">
+    <h2>Merkitse mitä oikeasti tapahtui (ground truth)</h2>
+    <div class="tag-grid">
+      <button class="btn btn-secondary tag-btn" data-tag="Haukku">Tavallinen haukku</button>
+      <button class="btn btn-secondary tag-btn" data-tag="Vinkuna/kipu">Vinkuna / kipu</button>
+      <button class="btn btn-secondary tag-btn" data-tag="Murina">Murina</button>
+      <button class="btn btn-secondary tag-btn" data-tag="Ulvonta">Ulvonta</button>
+      <button class="btn btn-secondary tag-btn" data-tag="Tuuli/muu ääni">Tuuli / muu ääni</button>
+      <button class="btn btn-secondary tag-btn" data-tag="Ei mitään erityistä">Ei mitään erityistä</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Loki</h2>
+    <div id="log"></div>
+    <button id="downloadLogBtn" class="btn btn-secondary" style="margin-top:8px;">Lataa loki (.csv)</button>
+    <button id="clearLogBtn" class="btn btn-secondary" style="margin-top:6px;">Tyhjennä loki</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <script>
+  // ---------------------------------------------------------------
+  // Haukkuhälytys-prototyyppi
+  //
+  // Tarkoitus: testata YAMNetin (yleinen 521-luokan äänitapahtumamalli)
+  // soveltuvuutta koiran ääntelyn erotteluun (Bark/Yip/Howl/Bow-wow/
+  // Growling/Whimper) OIKEISSA olosuhteissa, ENNEN kuin päätetään
+  // kannattaako integrointi Hauku-sovellukseen (shared.js).
+  //
+  // Tunnettuja rajoitteita, jotka on syytä pitää mielessä testatessa:
+  // - YAMNetin virallinen benchmark koko 521 luokan yli on vaatimaton
+  //   (balanced mAP 0.306) - yksittäisille luokille tarkkuus vaihtelee.
+  // - Tarkkuus on raportoitu heikkenevän merkittävästi useiden
+  //   samanaikaisten äänilähteiden tilanteessa (esim. tuuli + puhe +
+  //   toinen koira yhtä aikaa) - juuri metsäympäristön tyypillinen tilanne.
+  // - "Bow-wow" on AudioSet-ontologiassa käytännössä sama asia kuin
+  //   "Bark" (ei erillinen käytösmuoto), esitetty silti omana bar-rivinä
+  //   koska YAMNet palauttaa sen omana luokkanaan.
+  // - Downsamplaus 16 kHz:iin tehdään yksinkertaisella lineaarisella
+  //   interpoloinnilla ilman alipäästösuodatusta - riittää karkeaan
+  //   testaukseen, mutta ei ole täysin aliasing-vapaa.
+  // ---------------------------------------------------------------
+
+  const MODEL_URL = 'https://tfhub.dev/google/tfjs-model/yamnet/tfjs/1';
+  const CLASS_MAP_URL = 'https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv';
+  const TARGET_SAMPLE_RATE = 16000;
+  const WINDOW_SAMPLES = 16000; // ~1s ikkuna, karkea approksimaatio YAMNetin natiivista 0.96s/0.48s-kehyksestä
+  const HOP_MS = 500;
+
+  // AudioSet-indeksit koiraluokille (yamnet_class_map.csv)
+  const DOG_CLASSES = [
+    { idx: 70, label: 'Haukku (Bark)', color: '#f97316' },
+    { idx: 71, label: 'Yip',            color: '#fb923c' },
+    { idx: 72, label: 'Ulvonta (Howl)', color: '#7c3aed' },
+    { idx: 73, label: 'Bow-wow',        color: '#fdba74' },
+    { idx: 74, label: 'Murina (Growling)', color: '#dc2626' },
+    { idx: 75, label: 'Vinkuna (Whimper)', color: '#ef4444' },
+  ];
+
+  let model = null;
+  let classNames = null; // 521-pituinen taulukko, täytetään class-map-CSV:stä
+  let audioCtx = null, micStream = null, processorNode = null, gainNode = null;
+  let isListening = false;
+  let rollingBuffer = []; // 16kHz näytteet, aikajärjestyksessä
+  let inferenceTimer = null;
+  let sessionStartMs = null;
+  let dogClassOverThreshold = {}; // idx -> bool, reunantunnistusta varten lokiin
+  const logEntries = []; // {t, type, text}
+
+  // ---- Apufunktiot ----
+
+  function setStatus(text) {
+    document.getElementById('statusText').textContent = text;
+  }
+
+  function elapsedLabel() {
+    if (!sessionStartMs) return '00:00';
+    const s = Math.floor((Date.now() - sessionStartMs) / 1000);
+    const m = Math.floor(s / 60);
+    const ss = s % 60;
+    return String(m).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+  }
+
+  function addLogEntry(type, text) {
+    const entry = { t: elapsedLabel(), type, text };
+    logEntries.push(entry);
+    const div = document.createElement('div');
+    div.className = 'entry-' + type;
+    div.textContent = `[${entry.t}] ${text}`;
+    const logEl = document.getElementById('log');
+    logEl.appendChild(div);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // Yksinkertainen CSV-parseri, joka osaa lainausmerkkien sisällä olevat pilkut
+  // (esim. "Livestock, farm animals, working animals" on yksi kenttä).
+  function parseCsvLine(line) {
+    const result = [];
+    let cur = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQuotes = !inQuotes; }
+      else if (c === ',' && !inQuotes) { result.push(cur); cur = ''; }
+      else { cur += c; }
+    }
+    result.push(cur);
+    return result;
+  }
+
+  async function loadClassMap() {
+    const res = await fetch(CLASS_MAP_URL);
+    if (!res.ok) throw new Error('Luokkakartan lataus epäonnistui: ' + res.status);
+    const text = await res.text();
+    const lines = text.trim().split('\n');
+    const names = new Array(521).fill('?');
+    for (let i = 1; i < lines.length; i++) { // rivi 0 = otsikko
+      const cols = parseCsvLine(lines[i]);
+      const idx = parseInt(cols[0], 10);
+      const displayName = cols[2] ? cols[2].replace(/^"|"$/g, '') : '?';
+      if (!isNaN(idx)) names[idx] = displayName;
+    }
+    return names;
+  }
+
+  // Lineaarinen interpolointi-alinäytteistys laitteen natiivista taajuudesta 16kHz:iin.
+  // Huom: ei alipäästösuodatusta ennen alinäytteistystä - karkea mutta riittävä testaukseen.
+  function downsample(buffer, inRate, outRate) {
+    if (inRate === outRate) return buffer;
+    const ratio = inRate / outRate;
+    const newLen = Math.round(buffer.length / ratio);
+    const result = new Float32Array(newLen);
+    for (let i = 0; i < newLen; i++) {
+      const pos = i * ratio;
+      const lo = Math.floor(pos);
+      const hi = Math.min(lo + 1, buffer.length - 1);
+      const frac = pos - lo;
+      result[i] = buffer[lo] * (1 - frac) + buffer[hi] * frac;
+    }
+    return result;
+  }
+
+  function buildDogBars() {
+    const container = document.getElementById('dogBars');
+    container.innerHTML = '';
+    DOG_CLASSES.forEach(cls => {
+      const row = document.createElement('div');
+      row.className = 'bar-row';
+      row.innerHTML = `
+        <div class="bar-label">
+          <span>${cls.label}</span>
+          <span class="score" id="score-${cls.idx}">0.00</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" id="bar-${cls.idx}" style="background:${cls.color}"></div></div>
+      `;
+      container.appendChild(row);
+    });
+  }
+
+  // ---- Mallin lataus ----
+
+  document.getElementById('loadBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('loadBtn');
+    btn.disabled = true;
+    try {
+      setStatus('Ladataan luokkakarttaa...');
+      classNames = await loadClassMap();
+      setStatus('Ladataan YAMNet-mallia (voi kestää hetken)...');
+      model = await tf.loadGraphModel(MODEL_URL, { fromTFHub: true });
+      setStatus('Malli ladattu. Voit aloittaa kuuntelun.');
+      addLogEntry('sys', 'Malli ja luokkakartta ladattu onnistuneesti.');
+      document.getElementById('listenBtn').disabled = false;
+    } catch (err) {
+      setStatus('Virhe mallin latauksessa: ' + err.message);
+      addLogEntry('sys', 'VIRHE mallin latauksessa: ' + err.message);
+      btn.disabled = false;
+    }
+  });
+
+  // ---- Kuuntelu ja inferenssi ----
+
+  async function startListening() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus('Selain ei tue mikrofonia.');
+      return;
+    }
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      setStatus('Mikrofonilupa evätty tai virhe: ' + err.message);
+      addLogEntry('sys', 'Mikrofonilupa evätty: ' + err.message);
+      return;
+    }
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const nativeRate = audioCtx.sampleRate;
+    addLogEntry('sys', `Mikrofoni käytössä. Natiivi näytteenottotaajuus: ${nativeRate} Hz -> alinäytteistetään ${TARGET_SAMPLE_RATE} Hz:iin.`);
+
+    const source = audioCtx.createMediaStreamSource(micStream);
+    // ScriptProcessorNode on deprecated, mutta yksinkertaisin toimiva ratkaisu
+    // nopeaan prototyyppiin - AudioWorklet olisi oikea valinta tuotantokoodiin.
+    processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    gainNode = audioCtx.createGain();
+    gainNode.gain.value = 0; // estää mikrofonin kaiun kaiuttimeen
+
+    processorNode.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      const resampled = downsample(input, nativeRate, TARGET_SAMPLE_RATE);
+      for (let i = 0; i < resampled.length; i++) rollingBuffer.push(resampled[i]);
+      const maxKeep = WINDOW_SAMPLES * 2;
+      if (rollingBuffer.length > maxKeep) {
+        rollingBuffer.splice(0, rollingBuffer.length - maxKeep);
+      }
+    };
+
+    source.connect(processorNode);
+    processorNode.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    isListening = true;
+    sessionStartMs = Date.now();
+    setStatus('Kuuntelee...');
+    addLogEntry('sys', 'Kuuntelu aloitettu.');
+    document.getElementById('listenBtn').textContent = 'Pysäytä kuuntelu';
+    document.getElementById('listenBtn').classList.add('btn-stop');
+
+    inferenceTimer = setInterval(runInference, HOP_MS);
+  }
+
+  function stopListening() {
+    isListening = false;
+    if (inferenceTimer) clearInterval(inferenceTimer);
+    inferenceTimer = null;
+    if (processorNode) { processorNode.disconnect(); processorNode.onaudioprocess = null; processorNode = null; }
+    if (gainNode) { gainNode.disconnect(); gainNode = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    if (audioCtx) { audioCtx.close(); audioCtx = null; }
+    rollingBuffer = [];
+    setStatus('Pysäytetty.');
+    addLogEntry('sys', 'Kuuntelu pysäytetty.');
+    document.getElementById('listenBtn').textContent = 'Aloita kuuntelu';
+    document.getElementById('listenBtn').classList.remove('btn-stop');
+  }
+
+  function runInference() {
+    if (!isListening || !model) return;
+    if (rollingBuffer.length < WINDOW_SAMPLES) return; // ei vielä täyttä ikkunaa
+
+    const windowArr = new Float32Array(rollingBuffer.slice(-WINDOW_SAMPLES));
+
+    try {
+      tf.tidy(() => {
+        const waveform = tf.tensor1d(windowArr, 'float32');
+        const output = model.predict(waveform); // [scores, embeddings, spectrogram]
+        const scores = Array.isArray(output) ? output[0] : output;
+        const meanScores = scores.mean(0); // keskiarvo kehysten yli -> [521]
+        const data = meanScores.dataSync();
+        updateUI(data);
+      });
+    } catch (err) {
+      addLogEntry('sys', 'VIRHE inferenssissä: ' + err.message);
+    }
+  }
+
+  function updateUI(scoreArray) {
+    const threshold = parseFloat(document.getElementById('thresholdSlider').value);
+
+    // Koiraluokkien palkit
+    DOG_CLASSES.forEach(cls => {
+      const score = scoreArray[cls.idx] || 0;
+      const bar = document.getElementById('bar-' + cls.idx);
+      const scoreEl = document.getElementById('score-' + cls.idx);
+      if (bar) bar.style.width = Math.min(100, score * 100) + '%';
+      if (scoreEl) scoreEl.textContent = score.toFixed(2);
+
+      const wasOver = !!dogClassOverThreshold[cls.idx];
+      const isOver = score >= threshold;
+      if (isOver && !wasOver) {
+        addLogEntry('auto', `${cls.label}: ${score.toFixed(2)} (ylitti kynnyksen ${threshold.toFixed(2)})`);
+      }
+      dogClassOverThreshold[cls.idx] = isOver;
+    });
+
+    // Top 5 kaikista 521 luokasta (kontekstiksi - havaitseeko malli esim. tuulen/puheen)
+    if (classNames) {
+      const indexed = scoreArray.map((v, i) => [i, v]);
+      indexed.sort((a, b) => b[1] - a[1]);
+      const top5 = indexed.slice(0, 5);
+      const listEl = document.getElementById('overallList');
+      listEl.innerHTML = top5.map(([i, v]) =>
+        `<div><span class="name">${classNames[i] || ('#' + i)}</span><span class="pct">${(v * 100).toFixed(0)}%</span></div>`
+      ).join('');
+    }
+  }
+
+  document.getElementById('listenBtn').addEventListener('click', () => {
+    if (isListening) stopListening(); else startListening();
+  });
+
+  document.getElementById('thresholdSlider').addEventListener('input', (e) => {
+    document.getElementById('thresholdVal').textContent = parseFloat(e.target.value).toFixed(2);
+  });
+
+  // ---- Manuaalinen ground-truth-merkintä ----
+
+  document.querySelectorAll('.tag-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      addLogEntry('tag', `MERKINTÄ: ${btn.dataset.tag}`);
+    });
+  });
+
+  // ---- Lokin lataus / tyhjennys ----
+
+  document.getElementById('downloadLogBtn').addEventListener('click', () => {
+    const header = 'aika,tyyppi,teksti\n';
+    const rows = logEntries.map(e =>
+      `${e.t},${e.type},"${e.text.replace(/"/g, '""')}"`
+    ).join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'haukkuhalytys-testiloki-' + Date.now() + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('clearLogBtn').addEventListener('click', () => {
+    logEntries.length = 0;
+    document.getElementById('log').innerHTML = '';
+    addLogEntry('sys', 'Loki tyhjennetty.');
+  });
+
+  // ---- Alustus ----
+  buildDogBars();
+  </script>
+</body>
+</html>
