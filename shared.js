@@ -1039,7 +1039,7 @@ function startMeasurement(uid) {
     {
       icon: L.divIcon({
         className: "",
-        html: `<div class="distance-label"></div>`,
+        html: `<div style="display:flex;justify-content:center;width:100%;"><span class="distance-label"></span></div>`,
         iconSize: [60, 20],
         iconAnchor: [30, 10]
       }),
@@ -1239,7 +1239,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v41";
+const APP_VERSION = "v42";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
