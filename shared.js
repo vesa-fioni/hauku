@@ -871,8 +871,17 @@ function buildPopupHtml(uid) {
     pairLabel = "Peruuta valinta";
     pairClass = "popup-btn popup-btn-active";
   } else if (pendingMeasureFrom === null) {
-    pairLabel = "Mittaa toiseen jäseneen";
-    pairClass = "popup-btn";
+    // Jos tällä jäsenellä on jo aktiivinen mittaus toiseen jäseneen, näytetään
+    // suoraan "Lopeta mittaus" - ei pakoteta käyttäjää muistamaan kumman
+    // jäsenen kanssa mittaus on käynnissä ja toistamaan koko valintaa.
+    const existingPair = findNonSelfPairInvolving(uid);
+    if (existingPair) {
+      pairLabel = "Lopeta mittaus";
+      pairClass = "popup-btn popup-btn-active";
+    } else {
+      pairLabel = "Mittaa toiseen jäseneen";
+      pairClass = "popup-btn";
+    }
   } else {
     pairLabel = "Valitse tämä pisteeksi";
     pairClass = "popup-btn popup-btn-active";
@@ -1053,6 +1062,22 @@ function isMeasuringPair(uidA, uidB) {
   return !!activeMeasurements[pairKey(uidA, uidB)];
 }
 
+// Etsii jäsenen uid mahdollisen aktiivisen "Mittaa toiseen jäseneen"
+// -mittauksen - jätetään pois oma-sijainti-mittaus (uid <-> minä), koska
+// sillä on oma erillinen nappinsa ja tila ("Etäisyys minuun"/"Lopeta
+// mittaus"). Palauttaa mittausolion tai null. Yksi jäsen voi olla mukana
+// vain yhdessä tällaisessa mittauksessa kerrallaan (ks. handlePairMeasureClick),
+// joten haku voi pysähtyä ensimmäiseen osumaan.
+function findNonSelfPairInvolving(uid) {
+  const selfUid = currentAuth?.currentUser?.uid;
+  for (const key in activeMeasurements) {
+    const m = activeMeasurements[key];
+    const isSelfPair = (m.a === selfUid && m.b === uid) || (m.b === selfUid && m.a === uid);
+    if (!isSelfPair && (m.a === uid || m.b === uid)) return m;
+  }
+  return null;
+}
+
 // Viiva: katkoviiva, lähes läpinäkyvä, neutraali väri (ei koira/ihminen-
 // brändiväri, ettei sekoitu rooliväritykseen) - antaa visuaalisen
 // kontekstin sille mitä lukema tarkoittaa, ks. valmistusohjeen kohta 4.
@@ -1172,7 +1197,15 @@ function handlePairMeasureClick(uid) {
   if (pendingMeasureFrom === uid) {
     pendingMeasureFrom = null;
   } else if (pendingMeasureFrom === null) {
-    pendingMeasureFrom = uid;
+    // Jos jäsenellä on jo aktiivinen mittaus (napin teksti oli "Lopeta
+    // mittaus"), sammutetaan se suoraan sen sijaan että aloitettaisiin uusi
+    // valinta - ks. findNonSelfPairInvolving ja buildPopupHtml.
+    const existingPair = findNonSelfPairInvolving(uid);
+    if (existingPair) {
+      stopMeasurementBetween(existingPair.a, existingPair.b);
+    } else {
+      pendingMeasureFrom = uid;
+    }
   } else {
     const fromUid = pendingMeasureFrom;
     pendingMeasureFrom = null;
@@ -1323,7 +1356,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v44";
+const APP_VERSION = "v45";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
