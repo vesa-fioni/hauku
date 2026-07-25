@@ -638,6 +638,17 @@ function setMapStyle(style, cfg) {
 // jatkuvaa akkulukemaa kartalla).
 const LOW_BATTERY_THRESHOLD = 20;
 
+// Ikoni-assettien (icon-dog*.png/icon-human*.png) cache-bust-versio -
+// ERILLINEN shared.js:n omasta APP_VERSION-numerosta, koska nämä ovat kuvia
+// (selain/GitHub Pages cachettaa niitä URL:n query-stringin perusteella,
+// aivan kuten shared.js?v=N:ää). HUOM: nosta tätä AINA kun jonkin
+// icon-dog*.png/icon-human*.png-tiedoston SISÄLTÖ vaihtuu, vaikka
+// tiedostonimi pysyisi samana - muuten selain/CDN jää tarjoamaan vanhaa
+// cachettua kuvaa loputtomiin (tämä juuri tapahtui 25.7.2026: pin-badge-
+// ikonit eivät näkyneet, koska tätä ei nostettu edellisen sisältömuutoksen
+// yhteydessä).
+const ICON_ASSET_VERSION = "2";
+
 function iconFor(role, alertActive, lowBattery) {
   const SIZE = 37; // 80% aiemmasta 46px:stä
   const theme = getMapTheme();
@@ -649,7 +660,7 @@ function iconFor(role, alertActive, lowBattery) {
   // erottumaan MML:n kirjavasta taustasta edes halon kanssa (ks. keskustelu
   // 25.7.2026). Kiinteä pallo ratkaisee kontrastin ilman halo-koristetta.
   // Cache-bustataan samaan tapaan kuin muutkin kuva-assetit (logo.png?v=N).
-  const src = (role === "dog" ? "icon-dog" : "icon-human") + theme.iconSuffix + ".png?v=1";
+  const src = (role === "dog" ? "icon-dog" : "icon-human") + theme.iconSuffix + ".png?v=" + ICON_ASSET_VERSION;
   const ring = alertActive ? `<div class="alert-ring" style="border-color:${theme.alertRing};"></div>` : "";
   const badge = alertActive
     ? `<div class="alert-badge" title="Haukkuu">🔊</div>`
@@ -1686,7 +1697,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v52";
+const APP_VERSION = "v53";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
