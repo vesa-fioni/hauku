@@ -476,6 +476,12 @@ function initMap(cfg) {
     // dotZoomThreshold) - merkkien ikonit pitää laskea uudelleen aina kun
     // zoom-taso muuttuu, koska iconFor lukee map.getZoom() kutsuhetkellä.
     map.on("zoomend", refreshAllMarkerIcons);
+    // Karttaseuranta ("Seuraa karttaa", ks. buildPopupHtml/updateFollowView):
+    // movestart+zoomstart merkitsevät käsin tehdyn panoroinnin/zoomauksen
+    // alkua (ohjelmalliset kutsut ohitetaan followProgrammaticMove-lipulla),
+    // moveend joko nollaa lipun tai käynnistää palautusajastimen.
+    map.on("movestart zoomstart", handleFollowUserInteractionStart);
+    map.on("moveend", handleFollowMapMoveEnd);
   }
   setMapStyle((cfg && cfg.mapStyle) || "osm", cfg);
 }
@@ -1103,6 +1109,27 @@ let activeMeasurements = {};
 // käyttötarkoitukseen.
 let pendingMeasureFrom = null;
 
+// ---- Karttaseuranta ("Seuraa karttaa") ----
+// uid:t, joita kartta pitää tällä hetkellä näkyvissä automaattisesti. Yksi
+// jäsen -> setView suoraan hänen kohdalleen. Useampi jäsen yhtä aikaa ->
+// fitBounds niin että kaikki mahtuvat näkyviin kerralla (kartalla ei voi
+// olla "keskellä" montaa pistettä samanaikaisesti) - ks. keskustelu
+// 24.7.2026. Puhtaasti näyttöpuolen tila, ei Firestore-kirjoitusta.
+let followedMembers = new Set();
+
+// Ohjelmallisen (oman) map.setView/fitBounds-kutsun ajaksi asetettu lippu,
+// jotta samasta kutsusta syntyvää movestart/zoomstart/moveend-tapahtumaa ei
+// tulkita käyttäjän käsin tekemäksi panoroinniksi/zoomaukseksi.
+let followProgrammaticMove = false;
+
+// Kun käyttäjä panoroi/zoomaa karttaa käsin seurannan ollessa päällä,
+// automaattinen näkymän sovitus keskeytetään väliaikaisesti - muuten kartta
+// hyppäisi heti takaisin kesken tarkastelun. Seuranta jatkuu itsestään
+// FOLLOW_RESUME_DELAY_MS:n kuluttua viimeisimmästä käsinliikkeestä.
+let followSuppressedByUser = false;
+let followResumeTimerId = null;
+const FOLLOW_RESUME_DELAY_MS = 5000; // toteutettu arvo, ks. keskustelu 24.7.2026
+
 // Kynnys, jonka jälkeen merkki himmennetään merkiksi vanhentuneesta datasta
 // (esim. koira taustalla / ruutu sammunut, ks. whitepaper kohta 14.1). Ei
 // tekstiä pysyvään tooltippiin - pelkkä visuaalinen himmennys riittää
@@ -1186,6 +1213,15 @@ function buildPopupHtml(uid) {
   }
   actionButtons.push(`<button type="button" class="${pairClass}" data-action="pair">${pairLabel}</button>`);
 
+  // Kartan automaattinen seuranta (ks. yllä oleva "Karttaseuranta"-osio) -
+  // näkyy kaikilla jäsenillä, myös omalla merkillä (esim. jos haluaa kartan
+  // pysyvän omassa sijainnissa ilman "Keskitä minuun" -napin toistuvaa
+  // painelua). Useampaa jäsentä voi seurata yhtä aikaa, joten tämä ei
+  // riipu pari-mittauksen tilasta.
+  const followLabel = isFollowing(uid) ? "Lopeta seuraaminen" : "Seuraa karttaa";
+  const followClass = isFollowing(uid) ? "popup-btn popup-btn-active" : "popup-btn";
+  actionButtons.push(`<button type="button" class="${followClass}" data-action="follow">${followLabel}</button>`);
+
   if (actionButtons.length > 0) {
     html += `<div class="popup-actions">${actionButtons.join("")}</div>`;
   }
@@ -1236,6 +1272,10 @@ function startListeningToGroup(db, cfg) {
           // ensimmäinen piste, myös se pitää nollata.
           stopAllMeasurementsInvolving(uid);
           if (pendingMeasureFrom === uid) pendingMeasureFrom = null;
+          // Sama siivous koskee karttaseurantaa - poistunutta jäsentä ei voi
+          // enää seurata, ja jos hän oli ainoa seurattava, karttaa ei enää
+          // pidä yrittää sovittaa kehenkään.
+          followedMembers.delete(uid);
           return;
         }
 
@@ -1270,6 +1310,8 @@ function startListeningToGroup(db, cfg) {
               const el = e.popup.getElement();
               const pairBtn = el && el.querySelector('.popup-btn[data-action="pair"]');
               if (pairBtn) pairBtn.addEventListener("click", () => handlePairMeasureClick(uid));
+              const followBtn = el && el.querySelector('.popup-btn[data-action="follow"]');
+              if (followBtn) followBtn.addEventListener("click", () => toggleFollow(uid));
             });
         }
 
@@ -1307,6 +1349,10 @@ function startListeningToGroup(db, cfg) {
       // oleviin mittauksiin - päivitetään kaikki kerralla erän lopuksi, ei
       // jokaisen yksittäisen docChange-tapahtuman kohdalla erikseen.
       updateAllActiveMeasurements();
+      // Sama periaate karttaseurannalle - jos joku seurattavista liikkui,
+      // näkymä sovitetaan uudelleen (updateFollowView tarkistaa itse onko
+      // käyttäjä juuri panoroinut käsin, ks. followSuppressedByUser).
+      updateFollowView();
     }, err => setStatus("Virhe kuunnellessa ryhmää: " + err.message));
 
   db.collection("groups").doc(cfg.groupCode).collection("members")
@@ -1461,6 +1507,79 @@ function stopAllMeasurementsInvolving(uid) {
     const m = activeMeasurements[key];
     if (m.a === uid || m.b === uid) stopMeasurementByKey(key);
   });
+}
+
+function isFollowing(uid) {
+  return followedMembers.has(uid);
+}
+
+// Sovittaa kartan näkymän kaikkiin tällä hetkellä seurattaviin jäseniin.
+// Kutsutaan sekä napin painalluksesta että aina kun jonkun seurattavan
+// sijainti päivittyy (ks. startListeningToGroup). Jos käyttäjä on juuri
+// panoroinut/zoomannut käsin, sovitus jätetään väliin kunnes
+// FOLLOW_RESUME_DELAY_MS on kulunut (ks. handleMapMoveEnd).
+function updateFollowView() {
+  if (followedMembers.size === 0) return;
+  if (followSuppressedByUser) return;
+
+  const latlngs = [];
+  followedMembers.forEach((uid) => {
+    const marker = markers[uid];
+    if (marker) latlngs.push(marker.getLatLng());
+  });
+  if (latlngs.length === 0) return;
+
+  followProgrammaticMove = true;
+  if (latlngs.length === 1) {
+    map.setView(latlngs[0], Math.max(map.getZoom(), 15));
+  } else {
+    map.fitBounds(L.latLngBounds(latlngs), { padding: [50, 50], maxZoom: 16 });
+  }
+}
+
+// "Seuraa karttaa" -napin klikkaus popupissa. Useampaa jäsentä voi seurata
+// yhtä aikaa (ks. followedMembers-kommentti) - klikkaus vain lisää/poistaa
+// tämän jäsenen joukosta, ei vaikuta muihin käynnissä oleviin seurantoihin.
+function toggleFollow(uid) {
+  if (followedMembers.has(uid)) {
+    followedMembers.delete(uid);
+  } else {
+    followedMembers.add(uid);
+  }
+  // Tietoinen napinpainallus vaikuttaa heti - ei jäädä odottamaan mahdollista
+  // käsinpanoroinnin taukoa, joka koskee vain automaattisia päivityksiä.
+  followSuppressedByUser = false;
+  if (followResumeTimerId) { clearTimeout(followResumeTimerId); followResumeTimerId = null; }
+  updateFollowView();
+  reopenPopupIfOpen(uid);
+}
+
+// Sidotaan initMap:ssa map.on("movestart zoomstart", ...) -tapahtumaan.
+// Ohittaa oman (updateFollowView:n) aiheuttaman liikkeen followProgrammaticMove-
+// lipun avulla, jotta vain käyttäjän käsin tekemä panorointi/zoomaus
+// keskeyttää seurannan.
+function handleFollowUserInteractionStart() {
+  if (followProgrammaticMove) return;
+  if (followedMembers.size === 0) return;
+  followSuppressedByUser = true;
+  if (followResumeTimerId) clearTimeout(followResumeTimerId);
+}
+
+// Sidotaan initMap:ssa map.on("moveend", ...) -tapahtumaan. Toimii sekä
+// ohjelmallisen siirron lopetusmerkkinä (nollaa followProgrammaticMove) että
+// käsinliikkeen jälkeisen palautusajastimen käynnistäjänä.
+function handleFollowMapMoveEnd() {
+  if (followProgrammaticMove) {
+    followProgrammaticMove = false;
+    return;
+  }
+  if (followedMembers.size === 0 || !followSuppressedByUser) return;
+  if (followResumeTimerId) clearTimeout(followResumeTimerId);
+  followResumeTimerId = setTimeout(() => {
+    followResumeTimerId = null;
+    followSuppressedByUser = false;
+    updateFollowView();
+  }, FOLLOW_RESUME_DELAY_MS);
 }
 
 function reopenPopupIfOpen(uid) {
@@ -1776,7 +1895,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v57";
+const APP_VERSION = "v58";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
