@@ -511,6 +511,99 @@ function centerOnSelf() {
   }
 }
 
+// ---- Karttatyylikohtaiset korostusvärit ----
+// MML:n avoin maastokartta (ja etenkin sen kaupunkialueiden "taustakartta"-
+// tyylinen versio, ks. kuvakaappaukset 24.7.2026) on paljon kirjavampi kuin
+// OSM/OpenTopoMap: ruskeat korkeuskäyrät, keltaiset/oranssit maalajialueet
+// ja kaupungeissa runsaasti punaista (tiet) ja magentaa (rakennukset).
+// Sama "brändipaletti" (oranssi koira, vihreä ihminen, punainen hälytys,
+// harmaa mittausviiva) hukkuu tähän kokonaan. Siksi värit sidotaan karttaan:
+// jokaiselle MAP_STYLES-avaimelle oma paletti, jossa värit on valittu niin
+// etteivät ne esiinny kyseisen kartan omassa väripaletissa.
+const MAP_THEME = {
+  osm: {
+    dog: "#f97316",
+    human: "#1b4332",
+    trail: "#f97316",
+    alertRing: "#ef4444",
+    distanceLine: "#444444",
+    distanceLabelBg: "rgba(255,255,255,0.85)",
+    distanceLabelColor: "#444",
+    iconSuffix: "",
+    markerHalo: false
+  },
+  topo: {
+    dog: "#f97316",
+    human: "#1b4332",
+    trail: "#f97316",
+    alertRing: "#ef4444",
+    distanceLine: "#444444",
+    distanceLabelBg: "rgba(255,255,255,0.85)",
+    distanceLabelColor: "#444",
+    iconSuffix: "",
+    markerHalo: false
+  },
+  // MML: kirkas magenta (koira/jälki/hälytys) ja kylläinen syaani (ihminen/
+  // mittaus) - kumpikaan ei esiinny MML:n maastokartan tai kaupunkikartan
+  // omassa väripaletissa (ruskea/keltainen/vihreä/punainen/musta). Myös
+  // itse merkki-ikonit on väritetty samoihin sävyihin erillisillä
+  // icon-dog-mml.png/icon-human-mml.png-tiedostoilla (alkuperäisten
+  // icon-dog.png/icon-human.png sävy/korostukset säilytetty, vain
+  // väri/kylläisyys vaihdettu - ks. iconSuffix). Valkoinen "halo" on silti
+  // mukana ylimääräisenä varmistuksena (esim. MML:n kaupunkikartan omat
+  // magentan sävyiset rakennuskorttelit).
+  mml: {
+    dog: "#e0159c",
+    human: "#0ea5b8",
+    trail: "#e0159c",
+    alertRing: "#e0159c",
+    distanceLine: "#0ea5b8",
+    distanceLabelBg: "rgba(255,255,255,0.92)",
+    distanceLabelColor: "#0b3d91",
+    iconSuffix: "-mml",
+    markerHalo: true
+  }
+};
+
+// Efektiivinen (fallbackin jälkeinen) karttatyyli - päivitetään setMapStyle:ssä.
+// Värivalinnat seuraavat AINA tätä, ei cfg.mapStyle:a suoraan, koska jos MML
+// putoaa OSM:ään puuttuvan API-avaimen takia, myös värien pitää pudota OSM:n
+// paletille eikä jäädä MML:n kirkkaisiin sävyihin OSM:n päällä.
+let currentMapStyle = "osm";
+
+function getMapTheme() {
+  return MAP_THEME[currentMapStyle] || MAP_THEME.osm;
+}
+
+// Päivittää jo piirrettyjen tasojen (jäljet, mittausviivat/-lukemat, merkit)
+// värit uuden teeman mukaisiksi - tarvitaan kun käyttäjä vaihtaa karttatyyliä
+// kesken session asetuksista, ei vain ensimmäisellä kartan piirrolla.
+function reapplyMapTheme() {
+  const theme = getMapTheme();
+
+  Object.keys(trails).forEach((uid) => {
+    trails[uid].setStyle({ color: theme.trail });
+  });
+
+  Object.keys(activeMeasurements).forEach((key) => {
+    const m = activeMeasurements[key];
+    m.line.setStyle({ color: theme.distanceLine });
+    const el = m.labelMarker.getElement();
+    const inner = el && el.querySelector(".distance-label");
+    if (inner) {
+      inner.style.background = theme.distanceLabelBg;
+      inner.style.color = theme.distanceLabelColor;
+    }
+  });
+
+  Object.keys(markers).forEach((uid) => {
+    const data = memberData[uid];
+    if (!data) return;
+    const isAlertActive = alertActiveFor(data);
+    markers[uid].setIcon(iconFor(data.role, isAlertActive, isLowBattery(data)));
+  });
+}
+
 function setMapStyle(style, cfg) {
   let effectiveStyle = style;
   let url;
@@ -534,6 +627,14 @@ function setMapStyle(style, cfg) {
 
   if (tileLayer) map.removeLayer(tileLayer);
   tileLayer = L.tileLayer(url, conf.options).addTo(map);
+
+  // Värit on sidottu efektiiviseen (fallbackin jälkeiseen) karttatyyliin, ei
+  // pyydettyyn - ks. MAP_THEME-kommentti. Jos karttatyyliä vaihdetaan kesken
+  // session (asetuksista), jo piirretyt jäljet/mittaukset/merkit väritetään
+  // uudelleen heti, ei vasta seuraavan Firestore-päivityksen yhteydessä.
+  const themeChanged = currentMapStyle !== effectiveStyle;
+  currentMapStyle = effectiveStyle;
+  if (themeChanged) reapplyMapTheme();
 }
 
 // Akkuvaroituksen kynnys - badge näkyy vain tämän alapuolella eikä silloin
@@ -543,11 +644,22 @@ const LOW_BATTERY_THRESHOLD = 20;
 
 function iconFor(role, alertActive, lowBattery) {
   const SIZE = 37; // 80% aiemmasta 46px:stä
-  // Omat brändi-ikonit (koira/ihminen) - väritetty roolin mukaisesti
-  // (koira=oranssi, ihminen=vihreä, ks. whitepaper kohta 12).
+  const theme = getMapTheme();
+  // Omat brändi-ikonit (koira/ihminen) - väritetty roolin JA karttatyylin
+  // mukaan (ks. MAP_THEME/iconSuffix). Perusväritykset (koira=oranssi,
+  // ihminen=vihreä) OSM/Topolle, magenta/syaani-versiot MML:lle - eri
+  // tiedostot samasta kuvasta, sama muoto/sävytys, vain väri vaihdettu.
   // Cache-bustataan samaan tapaan kuin muutkin kuva-assetit (logo.png?v=N).
-  const src = role === "dog" ? "icon-dog.png?v=1" : "icon-human.png?v=1";
-  const ring = alertActive ? `<div class="alert-ring"></div>` : "";
+  const src = (role === "dog" ? "icon-dog" : "icon-human") + theme.iconSuffix + ".png?v=1";
+  // Valkoinen "halo" merkin taakse ylimääräisenä kontrastivarmistuksena -
+  // pääasiallinen värikorjaus tulee nyt oikeasta väritetystä ikonitiedostosta
+  // (ks. src yllä), mutta halo auttaa vielä esim. MML:n kaupunkikartan omia
+  // magentan sävyisiä rakennuskortteleita vasten. Ei käytössä OSM/
+  // OpenTopoMapilla, joissa ikonit erottuvat jo ilman sitä.
+  const halo = theme.markerHalo
+    ? `<div style="position:absolute;inset:3px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.45);"></div>`
+    : "";
+  const ring = alertActive ? `<div class="alert-ring" style="border-color:${theme.alertRing};"></div>` : "";
   const badge = alertActive
     ? `<div class="alert-badge" title="Haukkuu">🔊</div>`
     : "";
@@ -561,7 +673,8 @@ function iconFor(role, alertActive, lowBattery) {
     html: `
       <div style="position:relative;width:${SIZE}px;height:${SIZE}px;">
         ${ring}
-        <img src="${src}" alt="" style="width:100%;height:100%;object-fit:contain;
+        ${halo}
+        <img src="${src}" alt="" style="position:relative;width:100%;height:100%;object-fit:contain;
                     filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6));">
         ${badge}
         ${batteryBadge}
@@ -573,6 +686,15 @@ function iconFor(role, alertActive, lowBattery) {
 
 function isLowBattery(data) {
   return typeof data.battery === "number" && data.battery <= LOW_BATTERY_THRESHOLD && !data.charging;
+}
+
+// Sama hälytyksen aktiivisuuslogiikka kuin startListeningToGroup:ssa (aikaleimapohjainen,
+// ei erillistä kuittausta - ks. hauku-haukkuhalytys-valmistusohje.md kohta 3).
+// Omaksi funktioksi eriytetty, jotta reapplyMapTheme voi laskea saman tuloksen
+// karttatyylin vaihtuessa ilman että logiikkaa on kahdessa paikassa.
+function alertActiveFor(data) {
+  const alertAtMs = data.alertAt && data.alertAt.toMillis ? data.alertAt.toMillis() : null;
+  return !!alertAtMs && (Date.now() - alertAtMs < ALERT_DURATION_MS);
 }
 
 let currentDb = null, currentAuth = null, currentCfg = null;
@@ -1046,7 +1168,7 @@ function startListeningToGroup(db, cfg) {
         // kuittausta) - ks. hauku-haukkuhalytys-valmistusohje.md kohta 3.
         const alertAtMs = data.alertAt && data.alertAt.toMillis ? data.alertAt.toMillis() : null;
         const now = Date.now();
-        const isAlertActive = !!alertAtMs && (now - alertAtMs < ALERT_DURATION_MS);
+        const isAlertActive = alertActiveFor(data);
         const lowBattery = isLowBattery(data);
 
         // Tooltip kertoo hälytyksen sanallisesti ("haukkuu!") - rengas/badge ei jää
@@ -1119,7 +1241,7 @@ function startListeningToGroup(db, cfg) {
         if (trails[uid]) return;
         if (doc.data().role !== "dog") return; // vain koiran jälki piirretään
 
-        trails[uid] = L.polyline([], { color: "#f97316", weight: 3 }).addTo(map);
+        trails[uid] = L.polyline([], { color: getMapTheme().trail, weight: 3 }).addTo(map);
 
         db.collection("groups").doc(cfg.groupCode).collection("members").doc(uid)
           .collection("track").orderBy("timestamp").limitToLast(500)
@@ -1192,15 +1314,16 @@ function startMeasurementBetween(uidA, uidB) {
 
   const line = L.polyline(
     [markers[uidA].getLatLng(), markers[uidB].getLatLng()],
-    { color: "#444444", weight: 2, opacity: 0.35, dashArray: "6,8" }
+    { color: getMapTheme().distanceLine, weight: 2, opacity: 0.35, dashArray: "6,8" }
   ).addTo(map);
 
+  const theme = getMapTheme();
   const labelMarker = L.marker(
     midpoint(markers[uidA].getLatLng(), markers[uidB].getLatLng()),
     {
       icon: L.divIcon({
         className: "",
-        html: `<div style="display:flex;justify-content:center;width:100%;"><span class="distance-label"></span></div>`,
+        html: `<div style="display:flex;justify-content:center;width:100%;"><span class="distance-label" style="background:${theme.distanceLabelBg};color:${theme.distanceLabelColor};"></span></div>`,
         iconSize: [60, 20],
         iconAnchor: [30, 10]
       }),
@@ -1573,7 +1696,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v49";
+const APP_VERSION = "v51";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
