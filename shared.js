@@ -529,8 +529,7 @@ const MAP_THEME = {
     distanceLine: "#444444",
     distanceLabelBg: "rgba(255,255,255,0.85)",
     distanceLabelColor: "#444",
-    iconSuffix: "",
-    markerHalo: false
+    iconSuffix: ""
   },
   topo: {
     dog: "#f97316",
@@ -540,28 +539,25 @@ const MAP_THEME = {
     distanceLine: "#444444",
     distanceLabelBg: "rgba(255,255,255,0.85)",
     distanceLabelColor: "#444",
-    iconSuffix: "",
-    markerHalo: false
+    iconSuffix: ""
   },
-  // MML: kirkas magenta (koira/jälki/hälytys) ja kylläinen syaani (ihminen/
-  // mittaus) - kumpikaan ei esiinny MML:n maastokartan tai kaupunkikartan
-  // omassa väripaletissa (ruskea/keltainen/vihreä/punainen/musta). Myös
-  // itse merkki-ikonit on väritetty samoihin sävyihin erillisillä
-  // icon-dog-mml.png/icon-human-mml.png-tiedostoilla (alkuperäisten
-  // icon-dog.png/icon-human.png sävy/korostukset säilytetty, vain
-  // väri/kylläisyys vaihdettu - ks. iconSuffix). Valkoinen "halo" on silti
-  // mukana ylimääräisenä varmistuksena (esim. MML:n kaupunkikartan omat
-  // magentan sävyiset rakennuskorttelit).
+  // MML: kiinteä väripallo (pin-badge) valkoisella ikonilla sisällä, ei
+  // silhuettivärjäystä suoraan kartan päälle. Tämä ratkaisee kontrastin
+  // perustavanlaatuisesti - pallon oma väri on aina sama riippumatta mitä
+  // kartalla on sen alla, joten hue-valinnalla ei tarvitse enää "väistellä"
+  // MML:n omaa väripalettia (ks. keskustelu 25.7.2026, kokeiltu aiemmin
+  // silhuetti+halo-yhdistelmällä joka näytti sotkuiselta). Värit ja itse
+  // icon-dog-mml.png/icon-human-mml.png-tiedostot suunniteltu yhdessä
+  // käyttäjän kanssa (koira #FF2FA3, ihminen #00A7B3).
   mml: {
-    dog: "#e0159c",
-    human: "#0ea5b8",
-    trail: "#e0159c",
-    alertRing: "#e0159c",
-    distanceLine: "#0ea5b8",
+    dog: "#ff2fa3",
+    human: "#00a7b3",
+    trail: "#ff2fa3",
+    alertRing: "#ff2fa3",
+    distanceLine: "#00a7b3",
     distanceLabelBg: "rgba(255,255,255,0.92)",
-    distanceLabelColor: "#0b3d91",
-    iconSuffix: "-mml",
-    markerHalo: true
+    distanceLabelColor: "#00636b",
+    iconSuffix: "-mml"
   }
 };
 
@@ -646,19 +642,14 @@ function iconFor(role, alertActive, lowBattery) {
   const SIZE = 37; // 80% aiemmasta 46px:stä
   const theme = getMapTheme();
   // Omat brändi-ikonit (koira/ihminen) - väritetty roolin JA karttatyylin
-  // mukaan (ks. MAP_THEME/iconSuffix). Perusväritykset (koira=oranssi,
-  // ihminen=vihreä) OSM/Topolle, magenta/syaani-versiot MML:lle - eri
-  // tiedostot samasta kuvasta, sama muoto/sävytys, vain väri vaihdettu.
+  // mukaan (ks. MAP_THEME/iconSuffix). OSM/Topolla sama läpinäkyvä silhuetti
+  // kuin ennenkin (koira=oranssi, ihminen=vihreä). MML:llä sen sijaan kiinteä
+  // väripallo (pin-badge) valkoisella ikonilla sisällä - eri visuaalinen tyyli
+  // samassa tiedostonimikäytännössä, koska pelkkä silhuetin väri ei riittänyt
+  // erottumaan MML:n kirjavasta taustasta edes halon kanssa (ks. keskustelu
+  // 25.7.2026). Kiinteä pallo ratkaisee kontrastin ilman halo-koristetta.
   // Cache-bustataan samaan tapaan kuin muutkin kuva-assetit (logo.png?v=N).
   const src = (role === "dog" ? "icon-dog" : "icon-human") + theme.iconSuffix + ".png?v=1";
-  // Valkoinen "halo" merkin taakse ylimääräisenä kontrastivarmistuksena -
-  // pääasiallinen värikorjaus tulee nyt oikeasta väritetystä ikonitiedostosta
-  // (ks. src yllä), mutta halo auttaa vielä esim. MML:n kaupunkikartan omia
-  // magentan sävyisiä rakennuskortteleita vasten. Ei käytössä OSM/
-  // OpenTopoMapilla, joissa ikonit erottuvat jo ilman sitä.
-  const halo = theme.markerHalo
-    ? `<div style="position:absolute;inset:3px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.45);"></div>`
-    : "";
   const ring = alertActive ? `<div class="alert-ring" style="border-color:${theme.alertRing};"></div>` : "";
   const badge = alertActive
     ? `<div class="alert-badge" title="Haukkuu">🔊</div>`
@@ -673,7 +664,6 @@ function iconFor(role, alertActive, lowBattery) {
     html: `
       <div style="position:relative;width:${SIZE}px;height:${SIZE}px;">
         ${ring}
-        ${halo}
         <img src="${src}" alt="" style="position:relative;width:100%;height:100%;object-fit:contain;
                     filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6));">
         ${badge}
@@ -1696,7 +1686,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v51";
+const APP_VERSION = "v52";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
