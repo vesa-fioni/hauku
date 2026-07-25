@@ -554,9 +554,11 @@ const MAP_THEME = {
     human: "#00a7b3",
     trail: "#ff2fa3",
     alertRing: "#ff2fa3",
-    distanceLine: "#00a7b3",
+    distanceLine: "#5f86c9",
+    distanceLineOpacity: 0.8,
+    distanceLineWeight: 3,
     distanceLabelBg: "rgba(255,255,255,0.92)",
-    distanceLabelColor: "#00636b",
+    distanceLabelColor: "#33415c",
     iconSuffix: "-mml"
   }
 };
@@ -583,7 +585,11 @@ function reapplyMapTheme() {
 
   Object.keys(activeMeasurements).forEach((key) => {
     const m = activeMeasurements[key];
-    m.line.setStyle({ color: theme.distanceLine });
+    m.line.setStyle({
+      color: theme.distanceLine,
+      weight: theme.distanceLineWeight ?? 2,
+      opacity: theme.distanceLineOpacity ?? 0.35
+    });
     const el = m.labelMarker.getElement();
     const inner = el && el.querySelector(".distance-label");
     if (inner) {
@@ -1313,12 +1319,17 @@ function startMeasurementBetween(uidA, uidB) {
   const key = pairKey(uidA, uidB);
   if (activeMeasurements[key]) return;
 
+  const theme = getMapTheme();
   const line = L.polyline(
     [markers[uidA].getLatLng(), markers[uidB].getLatLng()],
-    { color: getMapTheme().distanceLine, weight: 2, opacity: 0.35, dashArray: "6,8" }
+    {
+      color: theme.distanceLine,
+      weight: theme.distanceLineWeight ?? 2,
+      opacity: theme.distanceLineOpacity ?? 0.35,
+      dashArray: "6,8"
+    }
   ).addTo(map);
 
-  const theme = getMapTheme();
   const labelMarker = L.marker(
     midpoint(markers[uidA].getLatLng(), markers[uidB].getLatLng()),
     {
@@ -1697,7 +1708,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v53";
+const APP_VERSION = "v54";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
