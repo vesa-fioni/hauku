@@ -129,6 +129,34 @@
     font-size: 12px; color: #888; text-align: center; margin-top: 18px; line-height: 1.5;
   }
 
+  /* ---- Teaser (etusivu ilman ryhmää/konfiguraatiota) ---- */
+  #teaser {
+    display: none;
+    min-height: 100%;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 20px;
+    text-align: center;
+  }
+  .teaser-wordmark {
+    width: 100%; max-width: 420px; margin: 0 auto 22px;
+  }
+  .teaser-text {
+    max-width: 380px; color: #333; font-size: 15px; line-height: 1.6; margin: 0 0 24px;
+  }
+  .teaser-ig-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: linear-gradient(135deg, var(--orange), var(--orange-dark));
+    color: white; text-decoration: none;
+    font-weight: 700; font-size: 15px;
+    padding: 13px 24px; border-radius: 10px;
+    box-shadow: 0 4px 14px rgba(249,115,22,0.35);
+  }
+  .teaser-footnote {
+    font-size: 12px; color: #999; margin-top: 22px; max-width: 380px; line-height: 1.5;
+  }
+
   #app { display: none; height: 100%; flex-direction: column; }
 
   #appHeader {
@@ -258,6 +286,23 @@
 
   <div id="onboarding"></div>
 
+  <!-- Teaser: näytetään vain kun ei URL-parametrejä (ryhmä) eikä aiemmin
+       tallennettua laitekonfiguraatiota - ks. shared.js boot()/showTeaser() -->
+  <div id="teaser">
+    <img class="teaser-wordmark" src="hauku-wordmark.png?v=1" alt="Hauku - hauku.app">
+    <p class="teaser-text">
+      Ryhmäpohjainen, reaaliaikainen sijainninjako koirille ja niitä
+      seuraaville ihmisille - esimerkiksi metsästystilanteessa. Hauku on
+      vielä kehitteillä eikä palvelu ole tällä hetkellä avoinna.
+    </p>
+    <a class="teaser-ig-btn" href="https://instagram.com/hauku_app" target="_blank" rel="noopener">
+      Seuraa @hauku_app Instagramissa
+    </a>
+    <p class="teaser-footnote">
+      Seuraa meitä Instagramissa, niin kuulet jos/kun palvelu avautuu.
+    </p>
+  </div>
+
   <div id="app">
     <div id="appHeader">
       <div class="header-left">
@@ -289,6 +334,6 @@
   <!-- Haukkuhälytys vaihe 2 (v47): YAMNet-vahvistus RMS-laukaisulle, ks.
        hauku-haukkuhalytys-valmistusohje.md kohta 7 -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js" crossorigin="anonymous"></script>
-  <script src="shared.js?v=55"></script>
+  <script src="shared.js?v=56"></script>
 </body>
 </html>

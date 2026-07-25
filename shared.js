@@ -1776,7 +1776,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v55";
+const APP_VERSION = "v56";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -1810,12 +1810,35 @@ function resolveGroupConflict(existing, urlCfg) {
   };
 }
 
+// Teaser-etusivu (hauku.app ilman parametrejä): näytetään vain kun
+// laitteella ei ole vielä mitään tallennettua konfiguraatiota EIKÄ
+// jakolinkin mukana tullut mitään ryhmätietoa. Kumpi tahansa näistä
+// ohittaa teaserin ja jatkaa nykyiseen onboarding/kartta-käytökseen
+// (ks. hauku-whitepaper.md kohta 5, "Teaser-etusivu").
+function shouldShowTeaser(existingCfg, urlCfg) {
+  const hasExisting = !!(existingCfg && existingCfg.groupCode);
+  const hasUrlGroup = !!urlCfg.groupCode;
+  return !hasExisting && !hasUrlGroup;
+}
+
+function showTeaser() {
+  const teaserEl = document.getElementById("teaser");
+  if (teaserEl) teaserEl.style.display = "flex";
+}
+
 function boot() {
   const versionEl = document.getElementById("appVersion");
   if (versionEl) versionEl.textContent = APP_VERSION;
 
   const urlCfg = getUrlConfig();
-  const existing = resolveGroupConflict(loadConfig(), urlCfg);
+  const existingRaw = loadConfig();
+
+  if (shouldShowTeaser(existingRaw, urlCfg)) {
+    showTeaser();
+    return;
+  }
+
+  const existing = resolveGroupConflict(existingRaw, urlCfg);
 
   const merged = existing ? { ...existing } : {};
   if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
