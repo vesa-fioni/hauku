@@ -1218,7 +1218,7 @@ function buildPopupHtml(uid) {
   // pysyvän omassa sijainnissa ilman "Keskitä minuun" -napin toistuvaa
   // painelua). Useampaa jäsentä voi seurata yhtä aikaa, joten tämä ei
   // riipu pari-mittauksen tilasta.
-  const followLabel = isFollowing(uid) ? "Lopeta seuraaminen" : "Seuraa karttaa";
+  const followLabel = isFollowing(uid) ? "Lopeta seuraaminen" : "Seuraa";
   const followClass = isFollowing(uid) ? "popup-btn popup-btn-active" : "popup-btn";
   actionButtons.push(`<button type="button" class="${followClass}" data-action="follow">${followLabel}</button>`);
 
@@ -1895,7 +1895,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v58";
+const APP_VERSION = "v59";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
