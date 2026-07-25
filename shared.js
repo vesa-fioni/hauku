@@ -1776,7 +1776,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v56";
+const APP_VERSION = "v57";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -1824,6 +1824,8 @@ function shouldShowTeaser(existingCfg, urlCfg) {
 function showTeaser() {
   const teaserEl = document.getElementById("teaser");
   if (teaserEl) teaserEl.style.display = "flex";
+  const teaserVersionEl = document.getElementById("teaserVersion");
+  if (teaserVersionEl) teaserVersionEl.textContent = APP_VERSION;
 }
 
 function boot() {
