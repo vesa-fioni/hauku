@@ -472,6 +472,10 @@ function initMap(cfg) {
     map = L.map("map", { zoomControl: false }).setView([61.9241, 25.7482], 13);
     L.control.zoom({ position: "bottomleft" }).addTo(map);
     addLocateControl();
+    // Ikoni/pin-badge -> pieni väripiste tarkalla zoomilla (ks. iconFor,
+    // dotZoomThreshold) - merkkien ikonit pitää laskea uudelleen aina kun
+    // zoom-taso muuttuu, koska iconFor lukee map.getZoom() kutsuhetkellä.
+    map.on("zoomend", refreshAllMarkerIcons);
   }
   setMapStyle((cfg && cfg.mapStyle) || "osm", cfg);
 }
@@ -529,7 +533,11 @@ const MAP_THEME = {
     distanceLine: "#444444",
     distanceLabelBg: "rgba(255,255,255,0.85)",
     distanceLabelColor: "#444",
-    iconSuffix: ""
+    iconSuffix: "",
+    // null = ei koskaan vaihdu pieneksi pisteeksi (nykyinen käytös).
+    // Sama mekanismi on käytettävissä myös tälle teemalle - riittää asettaa
+    // tähän zoom-taso jos ikoni koetaan joskus liian isoksi täällä.
+    dotZoomThreshold: null
   },
   topo: {
     dog: "#f97316",
@@ -539,7 +547,8 @@ const MAP_THEME = {
     distanceLine: "#444444",
     distanceLabelBg: "rgba(255,255,255,0.85)",
     distanceLabelColor: "#444",
-    iconSuffix: ""
+    iconSuffix: "",
+    dotZoomThreshold: null
   },
   // MML: kiinteä väripallo (pin-badge) valkoisella ikonilla sisällä, ei
   // silhuettivärjäystä suoraan kartan päälle. Tämä ratkaisee kontrastin
@@ -559,7 +568,13 @@ const MAP_THEME = {
     distanceLineWeight: 3,
     distanceLabelBg: "rgba(255,255,255,0.92)",
     distanceLabelColor: "#33415c",
-    iconSuffix: "-mml"
+    iconSuffix: "-mml",
+    // MML:n avoimen WMTS-palvelun maxZoom on 15 (ks. MAP_STYLES.mml) - juuri
+    // sillä tarkimmalla zoomilla täysikokoinen pin-badge alkaa peittää
+    // kartan yksityiskohtia koiran/ihmisen sijainnin kohdalta (ks. keskustelu
+    // 25.7.2026). Tällä ja sitä tarkemmalla zoomilla merkki pienenee pieneksi
+    // väripisteeksi - ks. dotIconFor.
+    dotZoomThreshold: 15
   }
 };
 
@@ -598,6 +613,12 @@ function reapplyMapTheme() {
     }
   });
 
+  refreshAllMarkerIcons();
+}
+
+// Merkkien ikonien päivitys - kutsutaan sekä teeman (reapplyMapTheme) että
+// pelkän zoomin muuttuessa (ks. map.on("zoomend", ...) initMapissa).
+function refreshAllMarkerIcons() {
   Object.keys(markers).forEach((uid) => {
     const data = memberData[uid];
     if (!data) return;
@@ -655,9 +676,26 @@ const LOW_BATTERY_THRESHOLD = 20;
 // yhteydessä).
 const ICON_ASSET_VERSION = "2";
 
+// Pienen "pistetilan" koko (px) - käytetään kun map.getZoom() >= teeman
+// dotZoomThreshold. Tarkoituksella paljon pienempi kuin täysikokoinen ikoni,
+// jotta se ei enää peitä kartan yksityiskohtia lähimmällä zoomilla (ks.
+// keskustelu 25.7.2026, MML:n rajoitettu maxZoom + paljon yksityiskohtia).
+const DOT_SIZE = 16;
+
 function iconFor(role, alertActive, lowBattery) {
   const SIZE = 37; // 80% aiemmasta 46px:stä
   const theme = getMapTheme();
+
+  // Zoomista riippuva vaihto isosta ikonista/pin-badgesta pieneen väripisteeseen.
+  // map.getZoom() luetaan tuoreena joka kutsulla - refreshAllMarkerIcons()
+  // kutsuu tämän uudelleen jokaiselle merkille aina kun zoom muuttuu (ks.
+  // map.on("zoomend", ...) initMapissa), joten tämä pysyy ajan tasalla ilman
+  // erillistä tilanhallintaa täällä.
+  const zoom = map ? map.getZoom() : null;
+  if (theme.dotZoomThreshold != null && zoom != null && zoom >= theme.dotZoomThreshold) {
+    return dotIconFor(role, alertActive, theme);
+  }
+
   // Omat brändi-ikonit (koira/ihminen) - väritetty roolin JA karttatyylin
   // mukaan (ks. MAP_THEME/iconSuffix). OSM/Topolla sama läpinäkyvä silhuetti
   // kuin ennenkin (koira=oranssi, ihminen=vihreä). MML:llä sen sijaan kiinteä
@@ -688,6 +726,36 @@ function iconFor(role, alertActive, lowBattery) {
       </div>`,
     iconSize: [SIZE, SIZE],
     iconAnchor: [SIZE / 2, SIZE / 2]
+  });
+}
+
+// Pieni väripiste täysikokoisen ikonin/pin-badgen sijaan tarkalla zoomilla
+// (ks. iconFor/dotZoomThreshold). Rooli näkyy pelkästä väristä (sama
+// koira/ihminen-väripari kuin teeman muillakin elementeillä), ei enää
+// erillistä kuvaa - pisteen on tarkoitus olla mahdollisimman pieni ja
+// huomaamaton, jottei se peitä kartan yksityiskohtia. Hälytysrengas näkyy
+// silti (pienempänä), koska haukkuhälytys on turvallisuusmielessä tärkeä
+// tieto joka ei saa kadota pelkästään zoomin takia - akku-/hälytysbadget
+// (emoji) sen sijaan jätetään pois, koska ne eivät mahdu järkevästi näin
+// pienen pisteen viereen.
+function dotIconFor(role, alertActive, theme) {
+  const color = role === "dog" ? theme.dog : theme.human;
+  const ringSize = DOT_SIZE + 10;
+  const ringOffset = -((ringSize - DOT_SIZE) / 2);
+  const ring = alertActive
+    ? `<div class="alert-ring" style="border-color:${theme.alertRing};
+        width:${ringSize}px;height:${ringSize}px;top:${ringOffset}px;left:${ringOffset}px;"></div>`
+    : "";
+  return L.divIcon({
+    className: "",
+    html: `
+      <div style="position:relative;width:${DOT_SIZE}px;height:${DOT_SIZE}px;">
+        ${ring}
+        <div style="width:100%;height:100%;border-radius:50%;background:${color};
+                    border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);"></div>
+      </div>`,
+    iconSize: [DOT_SIZE, DOT_SIZE],
+    iconAnchor: [DOT_SIZE / 2, DOT_SIZE / 2]
   });
 }
 
@@ -1708,7 +1776,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v54";
+const APP_VERSION = "v55";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
