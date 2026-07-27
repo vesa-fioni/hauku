@@ -2228,40 +2228,88 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v64";
+const APP_VERSION = "v65";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
 // (aiempi käytös) tai ylikirjoitetaan automaattisesti ilman kysymystä.
 // Palauttaa configin josta jatketaan (joko alkuperäinen tai linkiltä vaihdettu).
+// Pieni apufunktio HTML-merkkien paetukseen, jotta käyttäjän/linkin oma
+// teksti (ryhmän nimi) ei voi rikkoa tai injektoida HTML:ää dialogiin.
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Brändin mukainen ryhmänvaihtodialogi, korvaa aiemman selaimen natiivin
+// confirm()-kutsun (ks. whitepaper kohta 14.6 - tunnettu rajoite: confirm()
+// ei erotu visuaalisesti tarpeeksi, minkä seurauksena käyttäjä saattoi
+// ohittaa sen huomaamatta esim. taustalla uudelleenladatun välilehden
+// yllättäessä). Palauttaa Promisen joka resolvoituu true:hun (vaihdetaan)
+// tai false:aan (jatketaan nykyisessä ryhmässä).
+function showGroupConflictDialog(currentLabel, linkLabel) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "overlay";
+    overlay.style.display = "flex";
+    overlay.innerHTML = `
+      <div class="onboard-card">
+        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Vaihdetaanko ryhmää?</h2>
+        <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 8px;">
+          Tällä laitteella on jo käytössä ryhmä <strong>"${escapeHtml(currentLabel)}"</strong>.
+        </p>
+        <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 4px;">
+          Avattu linkki vie ryhmään <strong>"${escapeHtml(linkLabel)}"</strong>.
+        </p>
+        <button class="btn btn-primary" id="conflictSwitchBtn">Vaihda ryhmään "${escapeHtml(linkLabel)}"</button>
+        <button class="btn btn-secondary" id="conflictStayBtn">Jatka ryhmässä "${escapeHtml(currentLabel)}"</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const cleanup = (result) => {
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve(result);
+    };
+
+    overlay.querySelector("#conflictSwitchBtn").addEventListener("click", () => cleanup(true));
+    overlay.querySelector("#conflictStayBtn").addEventListener("click", () => cleanup(false));
+    // Taustan klikkaus = turvallinen oletus (jatketaan nykyisessä ryhmässä),
+    // sama periaate kuin asetusoverlayssa - ei koskaan hiljaa vaihda ryhmää
+    // ilman eksplisiittistä nappia.
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) cleanup(false);
+    });
+  });
+}
+
+// Palauttaa Promisen (ei enää synkroninen confirm()) joka resolvoituu
+// käyttäjän valinnan mukaiseen konfiguraatioon. Ei ristiriitaa jos ryhmät
+// ovat samat tai jompikumpi puuttuu - resolvoituu silloin heti.
 function resolveGroupConflict(existing, urlCfg) {
-  if (!existing || !existing.groupCode || !urlCfg.groupCode) return existing;
-  if (urlCfg.groupCode === existing.groupCode) return existing;
+  if (!existing || !existing.groupCode || !urlCfg.groupCode) return Promise.resolve(existing);
+  if (urlCfg.groupCode === existing.groupCode) return Promise.resolve(existing);
 
   const currentLabel = existing.groupName || existing.groupCode;
   const linkLabel = urlCfg.groupName || urlCfg.groupCode;
 
-  const switchToLink = confirm(
-    `Tällä laitteella on jo käytössä ryhmä "${currentLabel}".\n\n` +
-    `Avattu linkki vie ryhmään "${linkLabel}".\n\n` +
-    `Vaihdetaanko ryhmään "${linkLabel}"?\n` +
-    `(Peruuta = jatketaan ryhmässä "${currentLabel}")`
-  );
+  return showGroupConflictDialog(currentLabel, linkLabel).then((switchToLink) => {
+    if (!switchToLink) return existing;
 
-  if (!switchToLink) return existing;
-
-  // Vaihdetaan ryhmä - ryhmäkoodi, -nimi, salausavain, Firebase-konfiguraatio
-  // ja mahdollinen linkiltä tuleva rooli otetaan käyttöön. Oma nimi ja muut
-  // henkilökohtaiset asetukset (karttatyyli, automaattipysäytys) säilytetään
-  // ennallaan.
-  return {
-    ...existing,
-    groupCode: urlCfg.groupCode,
-    groupName: urlCfg.groupName || urlCfg.groupCode,
-    encKey: urlCfg.encKey || existing.encKey,
-    firebase: urlCfg.firebase || existing.firebase,
-    role: urlCfg.role || existing.role
-  };
+    // Vaihdetaan ryhmä - ryhmäkoodi, -nimi, salausavain, Firebase-konfiguraatio
+    // ja mahdollinen linkiltä tuleva rooli otetaan käyttöön. Oma nimi ja muut
+    // henkilökohtaiset asetukset (karttatyyli, automaattipysäytys) säilytetään
+    // ennallaan.
+    return {
+      ...existing,
+      groupCode: urlCfg.groupCode,
+      groupName: urlCfg.groupName || urlCfg.groupCode,
+      encKey: urlCfg.encKey || existing.encKey,
+      firebase: urlCfg.firebase || existing.firebase,
+      role: urlCfg.role || existing.role
+    };
+  });
 }
 
 // Teaser-etusivu (hauku.app ilman parametrejä): näytetään vain kun
@@ -2294,41 +2342,45 @@ function boot() {
     return;
   }
 
-  const existing = resolveGroupConflict(existingRaw, urlCfg);
+  // resolveGroupConflict palauttaa nyt Promisen (brändin mukainen overlay-
+  // dialogi confirm()-kutsun sijaan, ks. keskustelu 25.7.2026) - loppuosa
+  // boot()-logiikasta on siirretty tämän .then()-kutsun sisään, koska se ei
+  // enää voi olla synkroninen.
+  resolveGroupConflict(existingRaw, urlCfg).then((existing) => {
+    const merged = existing ? { ...existing } : {};
+    if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
+    if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
+    if (!merged.encKey && urlCfg.encKey) merged.encKey = urlCfg.encKey;
+    if (!merged.groupName && urlCfg.groupName) merged.groupName = urlCfg.groupName;
+    if (!merged.role && urlCfg.role) merged.role = urlCfg.role;
+    if (!merged.mapStyle) merged.mapStyle = urlCfg.mapStyle || "osm";
+    if (!merged.mmlApiKey && urlCfg.mmlApiKey) merged.mmlApiKey = urlCfg.mmlApiKey;
+    if (merged.autoStopMinutes === undefined) merged.autoStopMinutes = urlCfg.autoStopMinutes ?? 15;
 
-  const merged = existing ? { ...existing } : {};
-  if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
-  if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
-  if (!merged.encKey && urlCfg.encKey) merged.encKey = urlCfg.encKey;
-  if (!merged.groupName && urlCfg.groupName) merged.groupName = urlCfg.groupName;
-  if (!merged.role && urlCfg.role) merged.role = urlCfg.role;
-  if (!merged.mapStyle) merged.mapStyle = urlCfg.mapStyle || "osm";
-  if (!merged.mmlApiKey && urlCfg.mmlApiKey) merged.mmlApiKey = urlCfg.mmlApiKey;
-  if (merged.autoStopMinutes === undefined) merged.autoStopMinutes = urlCfg.autoStopMinutes ?? 15;
+    const hasFirebase = merged.firebase && merged.firebase.apiKey && merged.firebase.projectId;
+    const hasGroup = !!merged.groupCode;
+    // hasEncKey on tarkoituksella pakollinen ehto: laitteet joiden tallennettu
+    // konfiguraatio on peräisin ennen salausta (ei vielä encKey-kenttää)
+    // ohjataan kertaalleen takaisin onboarding-lomakkeeseen, joka generoi
+    // avaimen automaattisesti (ks. renderConfigForm, encKeyValue) - ks.
+    // hauku-salaus-valmistusohje.md kohta 6.5 (versioyhteensopivuus).
+    const hasEncKey = !!merged.encKey;
+    const hasName = !!merged.name;
+    const hasRole = !!merged.role;
 
-  const hasFirebase = merged.firebase && merged.firebase.apiKey && merged.firebase.projectId;
-  const hasGroup = !!merged.groupCode;
-  // hasEncKey on tarkoituksella pakollinen ehto: laitteet joiden tallennettu
-  // konfiguraatio on peräisin ennen salausta (ei vielä encKey-kenttää)
-  // ohjataan kertaalleen takaisin onboarding-lomakkeeseen, joka generoi
-  // avaimen automaattisesti (ks. renderConfigForm, encKeyValue) - ks.
-  // hauku-salaus-valmistusohje.md kohta 6.5 (versioyhteensopivuus).
-  const hasEncKey = !!merged.encKey;
-  const hasName = !!merged.name;
-  const hasRole = !!merged.role;
+    addSettingsButton(() => {
+      showSettingsOverlay((cfg) => startPackTracker(cfg));
+    });
+    addPauseButton();
+    addListenButton();
 
-  addSettingsButton(() => {
-    showSettingsOverlay((cfg) => startPackTracker(cfg));
+    if (hasFirebase && hasGroup && hasEncKey && hasName && hasRole) {
+      saveConfig(merged);
+      startPackTracker(merged);
+    } else {
+      showOnboarding(merged, urlCfg, (cfg) => startPackTracker(cfg));
+    }
   });
-  addPauseButton();
-  addListenButton();
-
-  if (hasFirebase && hasGroup && hasEncKey && hasName && hasRole) {
-    saveConfig(merged);
-    startPackTracker(merged);
-  } else {
-    showOnboarding(merged, urlCfg, (cfg) => startPackTracker(cfg));
-  }
 }
 
 window.addEventListener("DOMContentLoaded", boot);
