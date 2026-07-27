@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Hauku — fragmenttitesti</title>
+<style>
+  :root { --forest: #1b4332; --forest-dark: #10291f; --orange: #f97316; --cream: #f7f5f0; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--cream); color: #222; margin: 0; padding: 20px 16px 60px;
+  }
+  .wrap { max-width: 460px; margin: 0 auto; }
+  .proto-banner {
+    background: #fef3c7; color: #92400e; font-size: 12px; font-weight: 700;
+    text-align: center; padding: 8px 10px; border-radius: 8px; margin-bottom: 18px;
+  }
+  h1 { font-size: 19px; color: var(--forest); margin: 0 0 6px; }
+  p.sub { font-size: 13px; color: #666; line-height: 1.5; margin: 0 0 18px; }
+
+  .result-box {
+    border-radius: 14px; padding: 20px; text-align: center; margin-bottom: 20px;
+  }
+  .result-pass { background: #dcfce7; border: 2px solid #16a34a; }
+  .result-fail { background: #fee2e2; border: 2px solid #dc2626; }
+  .result-none { background: white; border: 2px solid #e8e8e8; }
+  .result-icon { font-size: 32px; margin-bottom: 8px; }
+  .result-title { font-weight: 700; font-size: 16px; margin-bottom: 4px; }
+  .result-pass .result-title { color: #166534; }
+  .result-fail .result-title { color: #991b1b; }
+  .result-detail { font-size: 12px; color: #555; word-break: break-all; margin-top: 8px; font-family: monospace; }
+
+  .card {
+    background: white; border-radius: 12px; padding: 16px; margin-bottom: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+  }
+  .card h2 { font-size: 14px; color: var(--forest); margin: 0 0 8px; }
+  .card p { font-size: 13px; color: #555; line-height: 1.6; margin: 0 0 10px; }
+
+  .link-box {
+    background: #fafafa; border: 1px solid #eee; border-radius: 8px;
+    padding: 10px 12px; font-size: 12px; font-family: monospace;
+    word-break: break-all; margin-bottom: 10px;
+  }
+
+  .btn {
+    width: 100%; padding: 12px; border: none; border-radius: 8px;
+    font-size: 14px; font-weight: 700; cursor: pointer; margin-bottom: 6px;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--forest), var(--forest-dark)); color: white; }
+  .btn-secondary { background: #f3f4f6; color: #222; border: 1px solid #ccc; }
+
+  .steps { font-size: 13px; line-height: 1.8; padding-left: 18px; margin: 0; }
+  .steps li { margin-bottom: 4px; }
+
+  .copied-msg { font-size: 12px; color: var(--forest); font-weight: 700; text-align: center; height: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="proto-banner">
+    PROTOTYYPPI — testaa vain säilyykö URL:n #-osa eri kanavien läpi lähetettynä. Ei tallenna eikä lähetä mitään minnekään.
+  </div>
+
+  <h1>Fragmenttitesti</h1>
+  <p class="sub">
+    Testaa säilyykö linkin <code>#</code>-merkin jälkeinen osa hengissä kun
+    linkki lähetetään eri sovellusten kautta (WhatsApp, sähköposti,
+    tekstiviesti, jne). Tämä on ainoa tapa tietää varmasti — ei voi päätellä
+    etukäteen.
+  </p>
+
+  <div id="resultBox" class="result-box result-none">
+    <div class="result-icon">?</div>
+    <div class="result-title" id="resultTitle">Ei vielä testidataa tässä latauksessa</div>
+    <div class="result-detail" id="resultDetail"></div>
+  </div>
+
+  <div class="card">
+    <h2>1. Luo uusi testilinkki</h2>
+    <p>Jokainen testilinkki sisältää oman, satunnaisen tunnisteen fragmentissa
+       — näin näet juuri tämän linkin tuloksen, ei sekoitu aiempiin.</p>
+    <div class="link-box" id="generatedLink">(paina "Luo testilinkki")</div>
+    <button class="btn btn-primary" id="generateBtn">Luo uusi testilinkki</button>
+    <button class="btn btn-secondary" id="copyBtn" style="display:none;">Kopioi linkki</button>
+    <div class="copied-msg" id="copiedMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Näin testaat</h2>
+    <ol class="steps">
+      <li>Luo testilinkki (yllä) ja kopioi se.</li>
+      <li>Lähetä se itsellesi (tai toiselle laitteelle) valitsemasi kanavan
+          kautta: WhatsApp, sähköposti, tekstiviesti, Messenger, jne.</li>
+      <li>Avaa linkki vastaanottavalla laitteella/sovelluksella.</li>
+      <li>Katso tämän sivun yläosan tulosruutua: <b>vihreä = fragmentti
+          säilyi</b>, <b>punainen = fragmentti katosi matkalla</b>.</li>
+      <li>Toista jokaiselle kanavalle jonka haluat testata — yksi kanava
+          kerrallaan, uusi linkki joka testille.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Mitä tämä ei voi testata</h2>
+    <p>
+      Jos joku kanava esikatselee linkin automaattisesti taustalla (ilman
+      että kukaan klikkaa sitä) ja tuo esikatselu jostain syystä suorittaisi
+      koko sivun JavaScriptin, tämä sivu ei voi kertoa siitä — sillä ei ole
+      omaa palvelinta joka voisi kirjata ylös tapahtuiko niin. Tämä sivu
+      näkee vain sen, mitä tapahtuu kun joku oikeasti avaa linkin
+      selaimessaan. Useimmat esikatselut hakevat vain sivun otsikon/kuvan
+      eivätkä suorita JavaScriptiä, mutta tätä ei voi todistaa tällä
+      työkalulla.
+    </p>
+  </div>
+
+</div>
+
+<script>
+function checkFragmentOnLoad() {
+  const box = document.getElementById("resultBox");
+  const title = document.getElementById("resultTitle");
+  const detail = document.getElementById("resultDetail");
+  const hash = location.hash; // esim. "#test=abc123-1690000000"
+
+  if (!hash || hash.length < 2) {
+    box.className = "result-box result-none";
+    box.querySelector(".result-icon").textContent = "?";
+    title.textContent = "Ei fragmenttia tässä latauksessa";
+    detail.textContent = "(luo testilinkki alta ja avaa se uudelleen tämän jälkeen)";
+    return;
+  }
+
+  const match = hash.match(/#test=([a-z0-9]+)-(\d+)/i);
+  if (match) {
+    box.className = "result-box result-pass";
+    box.querySelector(".result-icon").textContent = "\u2713";
+    title.textContent = "Fragmentti säilyi!";
+    const createdAt = new Date(parseInt(match[2], 10));
+    detail.textContent = "Tunniste: " + match[1] + " — luotu " + createdAt.toLocaleString("fi-FI");
+  } else {
+    box.className = "result-box result-fail";
+    box.querySelector(".result-icon").textContent = "\u2717";
+    title.textContent = "Fragmentti löytyi, mutta väärässä muodossa";
+    detail.textContent = "Raaka arvo: " + hash;
+  }
+}
+
+document.getElementById("generateBtn").addEventListener("click", () => {
+  const token = Math.random().toString(36).substring(2, 10);
+  const timestamp = Date.now();
+  const baseUrl = location.origin + location.pathname;
+  const testLink = baseUrl + "#test=" + token + "-" + timestamp;
+
+  document.getElementById("generatedLink").textContent = testLink;
+  document.getElementById("copyBtn").style.display = "block";
+  document.getElementById("copiedMsg").textContent = "";
+
+  document.getElementById("copyBtn").onclick = () => {
+    navigator.clipboard.writeText(testLink).then(() => {
+      document.getElementById("copiedMsg").textContent = "Kopioitu!";
+      setTimeout(() => { document.getElementById("copiedMsg").textContent = ""; }, 2000);
+    }).catch(() => {
+      document.getElementById("copiedMsg").textContent = "Kopiointi ei onnistunut — valitse teksti käsin.";
+    });
+  };
+});
+
+checkFragmentOnLoad();
+</script>
+
+</body>
+</html>
