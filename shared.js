@@ -804,6 +804,14 @@ function alertActiveFor(data) {
 let currentDb = null, currentAuth = null, currentCfg = null;
 let isSending = false;
 let autoStopTimerId = null;
+// Kuuntelijoiden unsubscribe-kahvat - tarvitaan jotta ryhmän vaihto (uusi
+// ryhmä / "Luo uusi ryhmä" ilman sivun uudelleenlatausta) voi oikeasti
+// sulkea VANHAN ryhmän kuuntelun ennen uuden aloittamista. Ks. stopPackTracker
+// ja keskustelu 25.7.2026 (Anssi/Varpu-bugit) - ilman tätä vanhat jäsenet
+// jäivät näkyviin kartalle koska vanha onSnapshot-kuuntelu jäi käyntiin.
+let unsubMembers = null;
+let unsubDogRoster = null;
+let trackUnsubs = {}; // uid -> unsubscribe-funktio
 
 // Akkutaso luetaan Battery Status API:sta (navigator.getBattery) jos selain
 // tukee sitä - käytännössä Chrome/Samsung Internet Androidilla, ei Safari/iOS.
@@ -884,7 +892,53 @@ function setTopbar(role, groupName) {
   if (text) text.textContent = groupName || "";
 }
 
-function startPackTracker(cfg) {
+// Sulkee kaikki edellisen ryhmän/session kuuntelijat, ajastimet ja
+// Firebase-yhteyden ennen kuin uuteen ryhmään vaihdetaan. TÄMÄ ON PAKOLLINEN
+// ennen HaukuData.initFirebase(cfg):n uudelleenkutsua, koska
+// firebase.initializeApp() heittää virheen ("app/duplicate-app") jos
+// oletussovellus on jo olemassa - ilman tätä virhe keskeytti aiemmin koko
+// startPackTrackerin hiljaa juuri initFirebase-kutsun kohdalla, jättäen
+// vanhan ryhmän kuuntelut, GPS-seurannan ja Firestore-yhteyden käyntiin
+// vaikka ylätunniste näytti jo uutta ryhmän nimeä (ks. keskustelu 25.7.2026,
+// "Anssi"/"Varpu" jäivät näkyviin vanhasta ryhmästä).
+async function stopPackTracker() {
+  if (unsubMembers) { unsubMembers(); unsubMembers = null; }
+  if (unsubDogRoster) { unsubDogRoster(); unsubDogRoster = null; }
+  Object.values(trackUnsubs).forEach(unsub => unsub());
+  trackUnsubs = {};
+
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  if (autoStopTimerId !== null) { clearTimeout(autoStopTimerId); autoStopTimerId = null; }
+  if (freshnessIntervalId !== null) { clearInterval(freshnessIntervalId); freshnessIntervalId = null; }
+  if (isListening) stopSoundDetection(false);
+
+  Object.keys(activeMeasurements).forEach(stopMeasurementByKey);
+  Object.values(alertTimers).forEach(clearTimeout);
+  alertTimers = {};
+  lastAlertSeen = {};
+  memberData = {};
+  followedMembers.clear();
+  pendingMeasureFrom = null;
+
+  Object.values(markers).forEach(m => map.removeLayer(m));
+  markers = {};
+  Object.values(trails).forEach(t => map.removeLayer(t));
+  trails = {};
+  firstFix = true;
+
+  // Firebase-oletussovellus pitää poistaa kokonaan (ei vain unohtaa
+  // muuttujaa) ennen uutta initializeApp()-kutsua - muuten SDK heittää
+  // "Firebase App named '[DEFAULT]' already exists" -virheen.
+  if (typeof firebase !== "undefined" && firebase.apps && firebase.apps.length > 0) {
+    await Promise.all(firebase.apps.map(app => app.delete()));
+  }
+  currentDb = null;
+  currentAuth = null;
+}
+
+async function startPackTracker(cfg) {
+  await stopPackTracker();
+
   document.getElementById("app").style.display = "flex";
   initMap(cfg);
   setTopbar(cfg.role, cfg.groupName || cfg.groupCode);
@@ -893,7 +947,6 @@ function startPackTracker(cfg) {
   // ei automaattisesti päällä pelkän roolin perusteella).
   const listenBtn = document.getElementById("listenBtn");
   if (listenBtn) listenBtn.style.display = cfg.role === "dog" ? "inline-block" : "none";
-  if (cfg.role !== "dog" && isListening) stopSoundDetection();
 
   const { auth, db } = HaukuData.initFirebase(cfg);
 
@@ -1497,7 +1550,7 @@ function startListeningToGroup(db, cfg) {
   // ensimmäiseen sijaintiin - ks. fallbackZoomAllowed-kommentti yllä.
   setTimeout(() => { fallbackZoomAllowed = true; }, 4000);
 
-  HaukuData.listenToMembers(db, cfg, {
+  unsubMembers = HaukuData.listenToMembers(db, cfg, {
     onChange: (changes) => {
       changes.forEach(({ type, uid, data }) => {
         // Poistokäsittely ENSIN, ennen lat/lng-tarkistusta: poistetun jäsenen
@@ -1610,7 +1663,7 @@ function startListeningToGroup(db, cfg) {
     onError: err => setStatus("Virhe kuunnellessa ryhmää: " + err.message)
   });
 
-  HaukuData.listenToDogRoster(db, cfg, (snapshot) => {
+  unsubDogRoster = HaukuData.listenToDogRoster(db, cfg, (snapshot) => {
       snapshot.docs.forEach((doc) => {
         const uid = doc.id;
         if (trails[uid]) return;
@@ -1621,7 +1674,7 @@ function startListeningToGroup(db, cfg) {
         // points on jo valmiiksi purettu HaukuData.listenToTrack:issa
         // ({lat, lng, accuracy, timeMs}) - ei tarvitse koskea enc/iv:hen
         // täällä ollenkaan.
-        HaukuData.listenToTrack(db, cfg, uid, (points) => {
+        trackUnsubs[uid] = HaukuData.listenToTrack(db, cfg, uid, (points) => {
             // filterImplausibleJumps palauttaa nyt segmenttien taulukon
             // (ks. MAX_GAP_MS) - Leafletin multi-polyline-muoto piirtää
             // jokaisen segmentin erillisenä viivana ilman että segmenttien
@@ -2107,9 +2160,14 @@ function startSoundDetection(db, cfg) {
   });
 }
 
-function stopSoundDetection() {
+// persistPreference: true kun käyttäjä itse painaa "Kuuntele ääntä" pois
+// päältä (tallennetaan hauku_listening_v1:een) - false kun tämä on vain
+// sisäinen tekninen pysäytys esim. ryhmänvaihdon yhteydessä (ks.
+// stopPackTracker), jolloin käyttäjän tallennettua mieltymystä ei pidä
+// hiljaa ylikirjoittaa "pois"-tilaan.
+function stopSoundDetection(persistPreference = true) {
   isListening = false;
-  setListeningEnabled(false);
+  if (persistPreference) setListeningEnabled(false);
   if (detectionRafId !== null) cancelAnimationFrame(detectionRafId);
   detectionRafId = null;
   if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
@@ -2143,7 +2201,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v62";
+const APP_VERSION = "v63";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
