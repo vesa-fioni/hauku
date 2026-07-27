@@ -1051,16 +1051,24 @@ function getCryptoKey() {
   return cachedCryptoKeyPromise;
 }
 
-// Salaa {lat, lng} yhdeksi enc/iv-pariksi. IV arvotaan TUOREENA JOKA KERTA -
+// Salaa mielivaltaisen JSON-yhteensopivan olion (esim. {lat, lng, accuracy,
+// name, role}) yhdeksi enc/iv-pariksi. IV arvotaan TUOREENA JOKA KERTA -
 // saman (avain, IV) -parin uudelleenkäyttö murtaisi AES-GCM:n luottamuksel-
 // lisuuden kokonaan (ks. valmistusohje kohta 6.3). Heittää virheen jos
 // avainta ei ole - kutsuvan koodin pitää estää kirjoitus tämän seurauksena,
 // ei koskaan pudota selkokieliseen (fail-closed, kohta 6.4).
-async function encryptLatLng(lat, lng) {
+//
+// PÄIVITYS 25.7.2026: laajennettu kattamaan lat/lng:n lisäksi accuracy,
+// name ja role - Firestore Consolen kautta katsottuna nämä olivat ainoa
+// jäljellä ollut selkokielinen tunnistetieto (ks. keskustelu, kuvakaappaus
+// Consolesta). updatedAt/expiresAt/timestamp EIVÄT voi olla tässä mukana -
+// Firestoren oma TTL-moottori ja orderBy-kyselyt tarvitsevat niiden pysyvän
+// oikeana Timestamp-tyyppinä, salattuna ne lakkaisivat toimimasta.
+async function encryptPayload(payload) {
   const key = await getCryptoKey();
   if (!key) throw new Error("Salausavain puuttuu - avaa liittymislinkkisi uudelleen.");
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = new TextEncoder().encode(JSON.stringify({ lat, lng }));
+  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
   return {
     enc: bytesToBase64Url(new Uint8Array(ciphertext)),
@@ -1068,14 +1076,20 @@ async function encryptLatLng(lat, lng) {
   };
 }
 
-// Purkaa enc/iv-parin takaisin {lat, lng}:ksi. Palauttaa null (ei heitä
-// virhettä) jos avain puuttuu tai purku epäonnistuu (väärä avain, korruptoi-
-// tunut data) - kutsuvan koodin pitää tällöin kohdella pistettä samaan tapaan
-// kuin puuttuvaa lat/lng:tä nykyisin (ohitetaan, ei näytetä, ei kaadeta
+// Purkaa enc/iv-parin takaisin olioksi. Palauttaa null (ei heitä virhettä)
+// jos avain puuttuu tai purku epäonnistuu (väärä avain, korruptoitunut
+// data) - kutsuvan koodin pitää tällöin kohdella pistettä samaan tapaan
+// kuin puuttuvaa dataa nykyisin (ohitetaan, ei näytetä, ei kaadeta
 // sovellusta). Tämä on tietoisesti hiljainen fail-closed lukupuolella, koska
 // yksittäisen pisteen purkuvirhe (esim. testaamaton jakokanava söi fragmentin)
 // ei saa estää muun ryhmän näkymistä.
-async function decryptLatLng(enc, iv) {
+//
+// Taaksepäinyhteensopiva: vanhat dokumentit joissa purettu payload sisältää
+// vain {lat, lng} (kirjoitettu ennen tätä laajennusta) toimivat edelleen -
+// kutsuva koodi (HaukuData.listenToMembers) yhdistää puretun datan raakaan
+// dataan niin että puuttuvat kentät (name/role/accuracy) periytyvät
+// tarvittaessa vanhoista selkokielisistä kentistä.
+async function decryptPayload(enc, iv) {
   const key = await getCryptoKey();
   if (!key) return null;
   try {
@@ -1118,34 +1132,34 @@ const HaukuData = {
     return auth.signInAnonymously();
   },
 
-  // Kirjoittaa jäsenen nykyisen sijainnin. extraFields sisältää roolin,
-  // nimen ja akkutiedot - kaikki mitä ei liity itse koordinaattiin, eikä
-  // siis salata (ks. hauku-salaus-valmistusohje.md kohta 1 - vain
-  // koordinaatit salataan, ei metadataa). accuracy pysyy myös selkokielisenä
-  // (ei osa uhkamallia, kohta 2).
-  async writeMemberLocation(db, cfg, uid, { lat, lng, accuracy, extraFields }) {
+  // Kirjoittaa jäsenen nykyisen sijainnin. lat/lng/accuracy/name/role
+  // salataan yhtenä pakettina (ks. hauku-salaus-valmistusohje.md kohta 1,
+  // päivitetty 25.7.2026 kattamaan myös nimi/rooli/tarkkuus - nämä olivat
+  // ainoa jäljellä ollut selkokielinen tunnistetieto Consolen kautta
+  // katsottuna). batteryFields (akkutaso, laturi) jäävät tarkoituksella
+  // selkokielisiksi - eivät tunnista ketään yksilöllisesti.
+  async writeMemberLocation(db, cfg, uid, { lat, lng, accuracy, name, role, batteryFields }) {
     // expiresAt: Firestoren TTL-käytäntö poistaa dokumentin automaattisesti
     // tämän ajan jälkeen. 24h riittää yhdelle metsästyspäivälle - kasvata
     // tarvittaessa (esim. useamman päivän reissu).
     const expiresAt = firebase.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000);
-    const { enc, iv } = await encryptLatLng(lat, lng);
+    const { enc, iv } = await encryptPayload({ lat, lng, accuracy, name, role });
     return memberDocRef(db, cfg, uid).set({
-      enc, iv, accuracy,
+      enc, iv,
       updatedAt: firebase.firestore.Timestamp.now(),
       expiresAt,
-      ...extraFields
+      ...batteryFields
     }, { merge: true });
   },
 
-  // Kirjoittaa yhden jäljen pisteen koiran track-alikokoelmaan. accuracy
-  // tallennetaan myös tänne, jotta näyttöpuolen tarkkuussuodatin
-  // (filterImplausibleJumps) voi hylätä epätarkat pisteet jo tallennetusta
-  // jäljestä, ei vain uusia kirjoitettaessa.
+  // Kirjoittaa yhden jäljen pisteen koiran track-alikokoelmaan. accuracy on
+  // nyt osa salattua pakettia (ei enää erillinen selkokielinen kenttä) -
+  // yhdenmukaista writeMemberLocationin kanssa.
   async writeTrackPoint(db, cfg, uid, { lat, lng, accuracy }) {
     const expiresAt = firebase.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000);
-    const { enc, iv } = await encryptLatLng(lat, lng);
+    const { enc, iv } = await encryptPayload({ lat, lng, accuracy });
     return memberDocRef(db, cfg, uid).collection("track").add({
-      enc, iv, accuracy,
+      enc, iv,
       timestamp: firebase.firestore.Timestamp.now(),
       expiresAt
     });
@@ -1173,11 +1187,16 @@ const HaukuData = {
         const uid = change.doc.id;
         if (change.type === "removed") return { type: change.type, uid, data: change.doc.data() };
         const raw = change.doc.data();
-        const decoded = (raw.enc && raw.iv) ? await decryptLatLng(raw.enc, raw.iv) : null;
+        const decoded = (raw.enc && raw.iv) ? await decryptPayload(raw.enc, raw.iv) : null;
+        // Yhdistetään koko purettu paketti (lat, lng, accuracy, name, role)
+        // raakadatan päälle - vanhat dokumentit (ennen 25.7.2026-laajennusta)
+        // joiden purettu paketti sisältää vain {lat, lng} periytyvät
+        // luontevasti raw:n selkokielisistä name/role/accuracy-kentistä,
+        // koska decoded ei silloin sisällä niitä ylikirjoitettavaksi.
         return {
           type: change.type,
           uid,
-          data: decoded ? { ...raw, lat: decoded.lat, lng: decoded.lng } : raw
+          data: decoded ? { ...raw, ...decoded } : raw
         };
       }));
       onChange(changes);
@@ -1186,13 +1205,23 @@ const HaukuData = {
 
   // Kuuntelee jäsenlistaa koiran jäljen (trail) rakentamista varten - erillinen
   // kuuntelija koska tämä ajaa oman track-alikuuntelijan käynnistyksen jokaiselle
-  // koira-roolissa olevalle jäsenelle (ks. listenToTrack).
+  // koira-roolissa olevalle jäsenelle (ks. listenToTrack). Rooli on nyt osa
+  // salattua pakettia (ks. writeMemberLocation), joten se pitää purkaa tässä
+  // ennen kuin sitä voi tarkistaa - onSnapshotCb saa siis valmiiksi puretun
+  // {id, role}-taulukon, ei enää raakaa snapshotia.
   listenToDogRoster(db, cfg, onSnapshotCb) {
-    return membersCollectionRef(db, cfg).onSnapshot(onSnapshotCb);
+    return membersCollectionRef(db, cfg).onSnapshot(async (snapshot) => {
+      const roster = await Promise.all(snapshot.docs.map(async (doc) => {
+        const raw = doc.data();
+        const decoded = (raw.enc && raw.iv) ? await decryptPayload(raw.enc, raw.iv) : null;
+        return { id: doc.id, role: decoded?.role ?? raw.role };
+      }));
+      onSnapshotCb(roster);
+    });
   },
 
   // Kuuntelee yhden jäsenen jälkeä (viimeisimmät 500 pistettä). Purkaa
-  // jokaisen pisteen enc/iv:n lat/lng:ksi ennen kutsua - epäonnistuneet
+  // jokaisen pisteen enc/iv:n lat/lng/accuracy:ksi ennen kutsua - epäonnistuneet
   // purut (esim. korruptoitunut piste) suodatetaan pois kokonaan sen sijaan
   // että NaN-arvot päätyisivät filterImplausibleJumps-suodattimeen.
   listenToTrack(db, cfg, uid, onSnapshotCb) {
@@ -1201,12 +1230,12 @@ const HaukuData = {
       .onSnapshot(async (trackSnap) => {
         const decoded = await Promise.all(trackSnap.docs.map(async (d) => {
           const raw = d.data();
-          const point = (raw.enc && raw.iv) ? await decryptLatLng(raw.enc, raw.iv) : null;
+          const point = (raw.enc && raw.iv) ? await decryptPayload(raw.enc, raw.iv) : null;
           if (!point) return null;
           return {
             lat: point.lat,
             lng: point.lng,
-            accuracy: raw.accuracy,
+            accuracy: point.accuracy ?? raw.accuracy,
             timeMs: raw.timestamp?.toMillis ? raw.timestamp.toMillis() : 0
           };
         }));
@@ -1304,11 +1333,9 @@ function startSendingLocation(db, auth, cfg) {
 
     HaukuData.writeMemberLocation(db, cfg, uid, {
       lat, lng, accuracy: pos.coords.accuracy,
-      extraFields: {
-        role: cfg.role,
-        name: cfg.name,
-        ...currentBatteryFields()
-      }
+      name: cfg.name,
+      role: cfg.role,
+      batteryFields: currentBatteryFields()
     }).catch(err => {
       // Fail-closed (ks. hauku-salaus-valmistusohje.md kohta 6.4): jos
       // salaus epäonnistuu (esim. avain puuttuu), kirjoitus jää tekemättä
@@ -1663,11 +1690,11 @@ function startListeningToGroup(db, cfg) {
     onError: err => setStatus("Virhe kuunnellessa ryhmää: " + err.message)
   });
 
-  unsubDogRoster = HaukuData.listenToDogRoster(db, cfg, (snapshot) => {
-      snapshot.docs.forEach((doc) => {
-        const uid = doc.id;
+  unsubDogRoster = HaukuData.listenToDogRoster(db, cfg, (roster) => {
+      roster.forEach(({ id, role }) => {
+        const uid = id;
         if (trails[uid]) return;
-        if (doc.data().role !== "dog") return; // vain koiran jälki piirretään
+        if (role !== "dog") return; // vain koiran jälki piirretään
 
         trails[uid] = L.polyline([], { color: getMapTheme().trail, weight: 3 }).addTo(map);
 
@@ -2201,7 +2228,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v63";
+const APP_VERSION = "v64";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
