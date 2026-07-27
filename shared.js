@@ -345,22 +345,106 @@ function attachConfigFormHandlers(container, onSave) {
     }
   });
 
-  // "Luo uusi ryhmä" - generoi uuden piilokoodin ja tyhjentää nimikentän,
-  // ilman että koko lomaketta tarvitsee renderöidä uudelleen.
+// Varoitusdialogi ennen "Luo uusi ryhmä" -toimintoa, jos laitteella on jo
+// aktiivinen ryhmä joka olisi jäämässä taakse. Sama riski kuin
+// showGroupConflictDialogissa: jos nykyisen ryhmän linkkiä ei ole
+// tallennettu/jaettu mihinkään, siihen ei pääse enää koskaan takaisin sen
+// jälkeen kun piilokentät ylikirjoitetaan uudella koodilla/avaimella.
+// Palauttaa Promisen joka resolvoituu true:hun (jatka uuden ryhmän luontiin)
+// tai false:aan (peruuta).
+function showNewGroupWarningDialog(currentLabel, currentCfgForLink) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "overlay";
+    overlay.style.display = "flex";
+    overlay.innerHTML = `
+      <div class="onboard-card">
+        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Luodaanko uusi ryhmä?</h2>
+        <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 4px;">
+          Tällä laitteella on käytössä ryhmä <strong>"${escapeHtml(currentLabel)}"</strong>.
+        </p>
+        <p style="font-size:12px; line-height:1.5; color:#9a3412; background:#fff7ed; border-radius:8px; padding:8px 10px; margin:12px 0 4px;">
+          <strong>Muista ensin:</strong> jos et ole tallentanut/jakanut tämän
+          ryhmän liittymislinkkiä mihinkään, uuden ryhmän luominen sulkee
+          sinut siitä ulos pysyvästi - linkkiä ei voi luoda uudelleen.
+        </p>
+        <button class="btn btn-secondary" id="newGroupCopyBtn" style="font-size:13px;">Kopioi ryhmän "${escapeHtml(currentLabel)}" linkki talteen</button>
+        <p id="newGroupCopyStatus" class="hint hint-ok" style="min-height:16px;"></p>
+        <button class="btn btn-primary" id="newGroupProceedBtn">Jatka, olen tallentanut linkin</button>
+        <button class="btn btn-secondary" id="newGroupCancelBtn">Peruuta</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const copyBtn = overlay.querySelector("#newGroupCopyBtn");
+    const copyStatus = overlay.querySelector("#newGroupCopyStatus");
+    copyBtn.addEventListener("click", () => {
+      const link = buildShareLink(currentCfgForLink);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(() => {
+          copyStatus.textContent = "Linkki kopioitu leikepöydälle!";
+        }).catch(() => { copyStatus.textContent = link; });
+      } else {
+        copyStatus.textContent = link;
+      }
+    });
+
+    const cleanup = (result) => {
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve(result);
+    };
+    overlay.querySelector("#newGroupProceedBtn").addEventListener("click", () => cleanup(true));
+    overlay.querySelector("#newGroupCancelBtn").addEventListener("click", () => cleanup(false));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) cleanup(false);
+    });
+  });
+}
+
+  // "Luo uusi ryhmä" - näyttää ensin varoitusdialogin jos nykyinen ryhmä on
+  // olemassa (ks. showNewGroupWarningDialog), ja vasta hyväksynnän jälkeen
+  // generoi uuden piilokoodin ja tyhjentää nimikentän, ilman että koko
+  // lomaketta tarvitsee renderöidä uudelleen.
   const newGroupLink = container.querySelector("#cfg_new_group_link");
   if (newGroupLink) {
     newGroupLink.addEventListener("click", (e) => {
       e.preventDefault();
-      container.querySelector("#cfg_group").value = generateGroupCode();
-      // Uusi ryhmä = uusi salausavain, ei vanhan uudelleenkäyttöä (ks.
-      // hauku-salaus-valmistusohje.md kohta 3).
-      container.querySelector("#cfg_encKey").value = generateEncKey();
-      const nameInput = container.querySelector("#cfg_groupName");
-      nameInput.value = "";
-      nameInput.placeholder = "esim. Syyshirvijahti";
-      nameInput.focus();
-      const hint = newGroupLink.closest("p");
-      if (hint) hint.textContent = "Uusi ryhmä luodaan tallennettaessa - jaa linkki tallennuksen jälkeen kutsuaksesi muut.";
+
+      const proceed = () => {
+        container.querySelector("#cfg_group").value = generateGroupCode();
+        // Uusi ryhmä = uusi salausavain, ei vanhan uudelleenkäyttöä (ks.
+        // hauku-salaus-valmistusohje.md kohta 3).
+        container.querySelector("#cfg_encKey").value = generateEncKey();
+        const nameInput = container.querySelector("#cfg_groupName");
+        nameInput.value = "";
+        nameInput.placeholder = "esim. Syyshirvijahti";
+        nameInput.focus();
+        const hint = newGroupLink.closest("p");
+        if (hint) hint.textContent = "Uusi ryhmä luodaan tallennettaessa - jaa linkki tallennuksen jälkeen kutsuaksesi muut.";
+      };
+
+      const existingGroupCode = container.querySelector("#cfg_group").value.trim();
+      const existingGroupName = container.querySelector("#cfg_groupName").value.trim();
+      if (existingGroupCode) {
+        const currentCfgForLink = {
+          groupCode: existingGroupCode,
+          groupName: existingGroupName || existingGroupCode,
+          encKey: container.querySelector("#cfg_encKey").value.trim(),
+          firebase: {
+            apiKey: container.querySelector("#cfg_apiKey").value.trim(),
+            authDomain: container.querySelector("#cfg_authDomain").value.trim(),
+            projectId: container.querySelector("#cfg_projectId").value.trim(),
+            appId: container.querySelector("#cfg_appId").value.trim(),
+          }
+        };
+        showNewGroupWarningDialog(existingGroupName || existingGroupCode, currentCfgForLink).then((confirmed) => {
+          if (confirmed) proceed();
+        });
+      } else {
+        // Ei vielä mitään ryhmää (ensimmäinen onboarding) - ei mitään
+        // taaksepäin menetettävää, ei tarvita varoitusta.
+        proceed();
+      }
     });
   }
 
@@ -2228,7 +2312,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v65";
+const APP_VERSION = "v66";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -2248,7 +2332,16 @@ function escapeHtml(str) {
 // ohittaa sen huomaamatta esim. taustalla uudelleenladatun välilehden
 // yllättäessä). Palauttaa Promisen joka resolvoituu true:hun (vaihdetaan)
 // tai false:aan (jatketaan nykyisessä ryhmässä).
-function showGroupConflictDialog(currentLabel, linkLabel) {
+//
+// currentCfgForLink: nykyisen (vaihdettavan pois) ryhmän täysi konfiguraatio
+// - tarvitaan jotta dialogi voi tarjota "kopioi nykyisen ryhmän linkki"
+// -turvaventtiilin. Ks. keskustelu 25.7.2026: jos käyttäjä vaihtaa ryhmää
+// koskaan tallentamatta/jakamatta nykyisen ryhmän linkkiä mihinkään, siihen
+// ryhmään ei ole enää MITÄÄN tietä takaisin - groupCode+encKey katoavat
+// localStoragesta pysyvästi eikä avainta voi laskea uudelleen. Tätä ei voi
+// korjata jälkikäteen, joten paras hetki estää se on juuri tässä, ennen
+// kuin valinta tehdään.
+function showGroupConflictDialog(currentLabel, linkLabel, currentCfgForLink) {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "overlay";
@@ -2262,11 +2355,31 @@ function showGroupConflictDialog(currentLabel, linkLabel) {
         <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 4px;">
           Avattu linkki vie ryhmään <strong>"${escapeHtml(linkLabel)}"</strong>.
         </p>
+        <p style="font-size:12px; line-height:1.5; color:#9a3412; background:#fff7ed; border-radius:8px; padding:8px 10px; margin:12px 0 4px;">
+          <strong>Muista ensin:</strong> jos et ole tallentanut/jakanut ryhmän
+          "${escapeHtml(currentLabel)}" liittymislinkkiä mihinkään, vaihtaminen
+          sulkee sinut siitä ulos pysyvästi - linkkiä ei voi luoda uudelleen.
+        </p>
+        <button class="btn btn-secondary" id="conflictCopyCurrentBtn" style="font-size:13px;">Kopioi ryhmän "${escapeHtml(currentLabel)}" linkki talteen</button>
+        <p id="conflictCopyStatus" class="hint hint-ok" style="min-height:16px;"></p>
         <button class="btn btn-primary" id="conflictSwitchBtn">Vaihda ryhmään "${escapeHtml(linkLabel)}"</button>
         <button class="btn btn-secondary" id="conflictStayBtn">Jatka ryhmässä "${escapeHtml(currentLabel)}"</button>
       </div>
     `;
     document.body.appendChild(overlay);
+
+    const copyBtn = overlay.querySelector("#conflictCopyCurrentBtn");
+    const copyStatus = overlay.querySelector("#conflictCopyStatus");
+    copyBtn.addEventListener("click", () => {
+      const link = buildShareLink(currentCfgForLink);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(() => {
+          copyStatus.textContent = "Linkki kopioitu leikepöydälle!";
+        }).catch(() => { copyStatus.textContent = link; });
+      } else {
+        copyStatus.textContent = link;
+      }
+    });
 
     const cleanup = (result) => {
       if (overlay.parentNode) document.body.removeChild(overlay);
@@ -2294,7 +2407,7 @@ function resolveGroupConflict(existing, urlCfg) {
   const currentLabel = existing.groupName || existing.groupCode;
   const linkLabel = urlCfg.groupName || urlCfg.groupCode;
 
-  return showGroupConflictDialog(currentLabel, linkLabel).then((switchToLink) => {
+  return showGroupConflictDialog(currentLabel, linkLabel, existing).then((switchToLink) => {
     if (!switchToLink) return existing;
 
     // Vaihdetaan ryhmä - ryhmäkoodi, -nimi, salausavain, Firebase-konfiguraatio
