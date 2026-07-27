@@ -74,6 +74,13 @@ function getUrlConfig() {
   const encKey = getFragmentEncKey();
   if (encKey) result.encKey = encKey;
 
+  // Valinnainen toinen kanava (ks. valmistusohje kohta 5) - kulkee
+  // TIETOISESTI erillisenä linkkinä, ei koskaan samassa linkissä kuin
+  // encKey. Luetaan silti samasta fragmentista tässä, koska tämä sama
+  // funktio käsittelee molempia linkkejä (kumpi tahansa avataan).
+  const pin = getFragmentPin();
+  if (pin) result.pin = pin;
+
   return result;
 }
 
@@ -108,7 +115,21 @@ function buildShareLink(cfg) {
   // Haukun omalle sivustolle), toisin kuin kyselyparametrit. Ks.
   // hauku-salaus-valmistusohje.md kohta 3. Tämän TÄYTYY olla viimeinen
   // askel, koska url.hash-asetus ei saa sekoittua searchParams-muutoksiin.
+  // HUOM: cfg.pin EI KOSKAAN päädy tähän linkkiin - ks. buildSecondFactorLink.
   if (cfg.encKey) url.hash = "key=" + cfg.encKey;
+  return url.toString();
+}
+
+// Valinnaisen toisen kanavan linkki (ks. hauku-salaus-valmistusohje.md
+// kohta 5) - TIETOISESTI ERILLINEN funktio buildShareLinkistä, koska tämä
+// linkki pitää lähettää eri kanavaa pitkin kuin ensisijainen jakolinkki.
+// Sisältää vain groupCoden (jotta linkki on itsenäisesti tunnistettavissa)
+// ja pin-fragmentin - EI apiKey/authDomain/projectId/appId/encKey, jottei
+// kumpikaan linkki yksinään sisällä molempia salaisuuksia.
+function buildSecondFactorLink(cfg) {
+  const url = new URL(window.location.origin + window.location.pathname);
+  if (cfg.groupCode) url.searchParams.set("group", cfg.groupCode);
+  if (cfg.pin) url.hash = "pin=" + cfg.pin;
   return url.toString();
 }
 
@@ -128,6 +149,10 @@ function renderConfigForm(existing, urlCfg) {
   // pysyy piilokentässä koko lomakkeen elinkaaren ajan (ks. groupCodeValue
   // yllä). Ks. hauku-salaus-valmistusohje.md kohta 3.
   const encKeyValue = existing?.encKey || urlCfg.encKey || generateEncKey();
+  // Valinnainen toinen kanava (ks. hauku-salaus-valmistusohje.md kohta 5) -
+  // EI generoida automaattisesti kuten encKey, koska tämä on tietoisesti
+  // vapaaehtoinen kytkin, pois päältä oletuksena. Tyhjä arvo = ei käytössä.
+  const pinValue = existing?.pin || urlCfg.pin || "";
   const groupNameValue = existing?.groupName || urlCfg.groupName || "";
   const isNewGroup = !existing?.groupCode && !urlCfg.groupCode;
 
@@ -142,6 +167,18 @@ function renderConfigForm(existing, urlCfg) {
     <input id="cfg_groupName" placeholder="esim. Syyshirvijahti" value="${groupNameValue}">
     <input type="hidden" id="cfg_group" value="${groupCodeValue}">
     <input type="hidden" id="cfg_encKey" value="${encKeyValue}">
+    <input type="hidden" id="cfg_pin" value="${pinValue}">
+    <div id="cfg_secondFactorBlock" style="display:${isNewGroup ? "block" : "none"};">
+      <label style="display:flex; align-items:center; gap:8px; font-weight:400; margin-top:10px;">
+        <input type="checkbox" id="cfg_useSecondFactor" style="width:auto;" ${pinValue ? "checked" : ""}>
+        Käytä lisäsuojaa (toinen kanava, valinnainen)
+      </label>
+      <p class="hint">
+        Lisää erillisen koodin joka pitää jakaa eri kanavaa pitkin kuin
+        liittymislinkki (esim. tekstiviestillä WhatsApp-linkin sijaan).
+        Suojaa jos linkki leviäisi vahingossa. Ei pakollinen.
+      </p>
+    </div>
     ${isNewGroup
       ? `<p class="hint">Uusi ryhmä luodaan tallennettaessa - jaa linkki tallennuksen jälkeen kutsuaksesi muut.</p>`
       : `<p class="hint">
@@ -236,6 +273,11 @@ function renderConfigForm(existing, urlCfg) {
         <button id="cfg_share" class="btn btn-secondary">Kopioi jakolinkki</button>
         <button id="cfg_share_app" class="btn btn-secondary">Jaa... (esim. WhatsApp)</button>
         <p id="cfg_share_status" class="hint hint-ok"></p>
+        ${pinValue ? `
+        <button id="cfg_share_second" class="btn btn-secondary">Kopioi toisen kanavan koodi</button>
+        <p id="cfg_share_second_status" class="hint hint-ok"></p>
+        <p class="hint">Muista lähettää tämä eri kanavaa pitkin kuin jakolinkki.</p>
+        ` : ""}
       </div>
 
       <p class="footnote">
@@ -258,6 +300,8 @@ function renderConfigForm(existing, urlCfg) {
 function showSaveLinkNowDialog(cfg) {
   return new Promise((resolve) => {
     const link = buildShareLink(cfg);
+    const hasSecondFactor = !!cfg.pin;
+    const secondLink = hasSecondFactor ? buildSecondFactorLink(cfg) : null;
     const overlay = document.createElement("div");
     overlay.className = "overlay";
     overlay.style.display = "flex";
@@ -270,8 +314,19 @@ function showSaveLinkNowDialog(cfg) {
           inkognitoikkunassa), ryhmääsi <strong>"${escapeHtml(cfg.groupName)}"</strong>
           ei voi enää avata uudelleen millään tavalla.
         </p>
-        <button class="btn btn-primary" id="saveLinkCopyBtn">Kopioi linkki leikepöydälle</button>
+        <button class="btn btn-primary" id="saveLinkCopyBtn">Kopioi liittymislinkki leikepöydälle</button>
         <p id="saveLinkStatus" class="hint hint-ok" style="min-height:16px;"></p>
+        ${hasSecondFactor ? `
+        <p style="font-size:12px; line-height:1.5; color:#9a3412; background:#fff7ed; border-radius:8px; padding:8px 10px; margin:14px 0 4px;">
+          <strong>Lisäsuoja on käytössä tälle ryhmälle.</strong> Lähetä alla
+          oleva toisen kanavan koodi <u>eri kanavaa pitkin</u> kuin
+          liittymislinkki - esimerkiksi tekstiviestillä, jos liittymislinkki
+          menee WhatsAppissa. Jos molemmat kulkevat samaa reittiä, lisäsuoja
+          ei tee mitään.
+        </p>
+        <button class="btn btn-secondary" id="saveLinkCopySecondBtn">Kopioi toisen kanavan koodi</button>
+        <p id="saveLinkSecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
+        ` : ""}
         <button class="btn btn-secondary" id="saveLinkContinueBtn">Jatka karttaan</button>
       </div>
     `;
@@ -287,6 +342,19 @@ function showSaveLinkNowDialog(cfg) {
         statusEl.textContent = link;
       }
     });
+
+    if (hasSecondFactor) {
+      const secondStatusEl = overlay.querySelector("#saveLinkSecondStatus");
+      overlay.querySelector("#saveLinkCopySecondBtn").addEventListener("click", () => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(secondLink).then(() => {
+            secondStatusEl.textContent = "Toisen kanavan koodi kopioitu!";
+          }).catch(() => { secondStatusEl.textContent = secondLink; });
+        } else {
+          secondStatusEl.textContent = secondLink;
+        }
+      });
+    }
 
     // Ei taustaklikkaus-sulkemista tässä dialogissa tarkoituksella - toisin
     // kuin muissa overlayissa, tämän pitää vaatia eksplisiittinen "Jatka"
@@ -317,9 +385,19 @@ function attachConfigFormHandlers(container, onSave) {
     const autoStopMinutes = Number.isFinite(autoStopRaw) && autoStopRaw >= 0 ? autoStopRaw : 15;
     const groupCode = container.querySelector("#cfg_group").value.trim();
     const groupName = container.querySelector("#cfg_groupName").value.trim() || groupCode;
+    // Toinen kanava on vapaaehtoinen (ks. hauku-salaus-valmistusohje.md
+    // kohta 5) - kytkin ratkaisee, ei pelkkä piilokentän arvon olemassaolo,
+    // koska käyttäjä voi myös POISTAA aiemmin käytössä olleen suojan
+    // rastin poistamalla (esim. jos huomaa sen olevan liian hankala
+    // käytännössä).
+    const useSecondFactorEl = container.querySelector("#cfg_useSecondFactor");
+    const useSecondFactor = useSecondFactorEl ? useSecondFactorEl.checked : false;
+    const existingPin = container.querySelector("#cfg_pin").value.trim();
+    const pin = useSecondFactor ? (existingPin || generatePin()) : "";
     const cfg = {
       groupCode,
       encKey: container.querySelector("#cfg_encKey").value.trim(),
+      pin,
       groupName,
       name: container.querySelector("#cfg_name").value.trim() || "Tuntematon",
       role,
@@ -356,6 +434,7 @@ function attachConfigFormHandlers(container, onSave) {
     return {
       groupCode: container.querySelector("#cfg_group").value.trim(),
       encKey: container.querySelector("#cfg_encKey").value.trim(),
+      pin: container.querySelector("#cfg_pin").value.trim(),
       groupName: container.querySelector("#cfg_groupName").value.trim(),
       firebase: {
         apiKey: container.querySelector("#cfg_apiKey").value.trim(),
@@ -382,6 +461,25 @@ function attachConfigFormHandlers(container, onSave) {
       statusEl.textContent = link;
     }
   });
+
+  // Toisen kanavan koodin uudelleenkopiointi (esim. uuden jäsenen
+  // kutsumiseksi myöhemmin olemassa olevaan lisäsuojattuun ryhmään) -
+  // näkyy vain jos tälle ryhmälle on jo aiemmin luotu pin (ks. groupField).
+  const shareSecondBtn = container.querySelector("#cfg_share_second");
+  if (shareSecondBtn) {
+    shareSecondBtn.addEventListener("click", () => {
+      const cfg = collectShareCfg();
+      const secondLink = buildSecondFactorLink(cfg);
+      const statusEl = container.querySelector("#cfg_share_second_status");
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(secondLink).then(() => {
+          statusEl.textContent = "Toisen kanavan koodi kopioitu!";
+        }).catch(() => { statusEl.textContent = secondLink; });
+      } else {
+        statusEl.textContent = secondLink;
+      }
+    });
+  }
 
   // "Jaa..." - avaa laitteen oman jakovalikon (Web Share API), jossa
   // WhatsApp on yleensä yksi vaihtoehto muiden joukossa. Ei vaadi
@@ -485,6 +583,13 @@ function showNewGroupWarningDialog(currentLabel, currentCfgForLink) {
         // Uusi ryhmä = uusi salausavain, ei vanhan uudelleenkäyttöä (ks.
         // hauku-salaus-valmistusohje.md kohta 3).
         container.querySelector("#cfg_encKey").value = generateEncKey();
+        // Nollataan myös toisen kanavan kytkin/pin - uusi ryhmä ei peri
+        // vanhan ryhmän valintaa, käyttäjä päättää tälle ryhmälle erikseen.
+        container.querySelector("#cfg_pin").value = "";
+        const secondFactorCheckbox = container.querySelector("#cfg_useSecondFactor");
+        if (secondFactorCheckbox) secondFactorCheckbox.checked = false;
+        const secondFactorBlock = container.querySelector("#cfg_secondFactorBlock");
+        if (secondFactorBlock) secondFactorBlock.style.display = "block";
         groupWasFreshlyCreated = true;
         const nameInput = container.querySelector("#cfg_groupName");
         nameInput.value = "";
@@ -501,6 +606,7 @@ function showNewGroupWarningDialog(currentLabel, currentCfgForLink) {
           groupCode: existingGroupCode,
           groupName: existingGroupName || existingGroupCode,
           encKey: container.querySelector("#cfg_encKey").value.trim(),
+          pin: container.querySelector("#cfg_pin").value.trim(),
           firebase: {
             apiKey: container.querySelector("#cfg_apiKey").value.trim(),
             authDomain: container.querySelector("#cfg_authDomain").value.trim(),
@@ -1178,12 +1284,29 @@ function generateEncKey() {
   return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
+// Generoi valinnaisen toisen kanavan koodin (ks. hauku-salaus-valmistusohje.md
+// kohta 5) - 8 tavua (64 bittiä) riittää tähän uhkamalliin, koska se
+// yhdistetään aina encKey:hen (256 bittiä) SHA-256:lla, ei käytetä
+// koskaan sellaisenaan avaimena. Lyhyempi kuin encKey siksi että se on
+// tarkoitettu välitettäväksi kokonaan eri kanavaa pitkin (esim. tekstiviesti)
+// - lyhyempi linkki/koodi on käytännössä helpompi käsitellä sellaisenaan.
+function generatePin() {
+  return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(8)));
+}
+
 // Lukee avaimen linkin #-fragmentista, jos sellainen on juuri nyt läsnä.
 // EI koskaan lue window.location.search:sta - vain hash. Käytetään VAIN
 // getUrlConfig()-funktiossa liittymishetkellä, ei ajonaikaisessa
 // salauksessa/purussa (ks. getCryptoKey alla).
 function getFragmentEncKey() {
   const match = window.location.hash.match(/key=([A-Za-z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+// Sama periaate valinnaiselle toisen kanavan koodille - eri linkki,
+// eri fragmenttiavain ("pin="), ei koskaan sama linkki kuin "key=".
+function getFragmentPin() {
+  const match = window.location.hash.match(/pin=([A-Za-z0-9_-]+)/);
   return match ? match[1] : null;
 }
 
@@ -1195,14 +1318,37 @@ function getFragmentEncKey() {
 let cachedCryptoKeyPromise = null;
 let cachedEncKeyString = null;
 
+// Yhdistää encKey:n ja (jos läsnä) valinnaisen pin:in yhdeksi AES-avaimeksi.
+// Kumpikin syöte on jo täysin satunnainen (koneen arpoma, ei ihmisen
+// keksimä salasana), joten pelkkä yhdistäminen + SHA-256-tiivistys riittää -
+// PBKDF2:n kaltaista hidastavaa avaimenjohtoa ei tarvita (ks. valmistusohje
+// kohta 5.1). Jos pin puuttuu, avain lasketaan pelkästä encKey:stä kuten
+// ennenkin (taaksepäinyhteensopiva ryhmille joissa toista kanavaa ei käytetä).
+async function deriveAesKeyFromMaterial(encKeyStr, pinStr) {
+  const encKeyBytes = base64UrlToBytes(encKeyStr);
+  let keyMaterialBytes = encKeyBytes;
+  if (pinStr) {
+    const pinBytes = base64UrlToBytes(pinStr);
+    const combined = new Uint8Array(encKeyBytes.length + pinBytes.length);
+    combined.set(encKeyBytes, 0);
+    combined.set(pinBytes, encKeyBytes.length);
+    keyMaterialBytes = new Uint8Array(await crypto.subtle.digest("SHA-256", combined));
+  }
+  return crypto.subtle.importKey("raw", keyMaterialBytes, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
 function getCryptoKey() {
   const keyStr = currentCfg?.encKey || null;
   if (!keyStr) return Promise.resolve(null);
-  if (cachedCryptoKeyPromise && cachedEncKeyString === keyStr) return cachedCryptoKeyPromise;
-  cachedEncKeyString = keyStr;
-  cachedCryptoKeyPromise = crypto.subtle.importKey(
-    "raw", base64UrlToBytes(keyStr), "AES-GCM", false, ["encrypt", "decrypt"]
-  );
+  const pinStr = currentCfg?.pin || null;
+  // Cache-avaimessa pitää huomioida myös pin, ettei vanha (esim. pelkästä
+  // encKey:stä laskettu) CryptoKey jää virheellisesti voimaan sen jälkeen
+  // kun pin ilmestyy currentCfg:hen (esim. toisen linkin avaaminen samalla
+  // laitteella myöhemmin).
+  const cacheKey = keyStr + "|" + (pinStr || "");
+  if (cachedCryptoKeyPromise && cachedEncKeyString === cacheKey) return cachedCryptoKeyPromise;
+  cachedEncKeyString = cacheKey;
+  cachedCryptoKeyPromise = deriveAesKeyFromMaterial(keyStr, pinStr);
   return cachedCryptoKeyPromise;
 }
 
@@ -2383,7 +2529,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v67";
+const APP_VERSION = "v68";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -2490,6 +2636,11 @@ function resolveGroupConflict(existing, urlCfg) {
       groupCode: urlCfg.groupCode,
       groupName: urlCfg.groupName || urlCfg.groupCode,
       encKey: urlCfg.encKey || existing.encKey,
+      // Ryhmänvaihdossa vanha pin ei ole enää relevantti (se kuului
+      // vanhalle ryhmälle) - otetaan vain jos linkki toi uuden, muuten
+      // tyhjä (uusi ryhmä ei automaattisesti peri vanhan toisen kanavan
+      // koodia).
+      pin: urlCfg.pin || undefined,
       firebase: urlCfg.firebase || existing.firebase,
       role: urlCfg.role || existing.role
     };
@@ -2535,6 +2686,9 @@ function boot() {
     if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
     if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
     if (!merged.encKey && urlCfg.encKey) merged.encKey = urlCfg.encKey;
+    // Valinnainen toinen kanava (ks. valmistusohje kohta 5) - sama
+    // periaate kuin encKey: kerran saatu pin säilyy, kunnes ryhmä vaihtuu.
+    if (!merged.pin && urlCfg.pin) merged.pin = urlCfg.pin;
     if (!merged.groupName && urlCfg.groupName) merged.groupName = urlCfg.groupName;
     if (!merged.role && urlCfg.role) merged.role = urlCfg.role;
     if (!merged.mapStyle) merged.mapStyle = urlCfg.mapStyle || "osm";
