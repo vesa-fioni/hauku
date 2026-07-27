@@ -937,8 +937,18 @@ function startPackTracker(cfg) {
 // avaimenjohtoa ei tarvita tässä vaiheessa. Valinnainen toinen kanava
 // (QR/pidempi koodi, valmistusohjeen kohta 5) ei ole vielä toteutettu -
 // tämä on vain vaiheen 1 (perussalaus) koodi.
-
-const ENC_KEY_STORAGE = "hauku_enc_key_v1";
+//
+// KORJAUS 25.7.2026: avain luetaan AINA currentCfg.encKey:stä, ei erillisestä
+// localStorage-avaimesta. Ryhmän luoja saa avaimen lomakkeen piilokentästä
+// (renderConfigForm, generateEncKey()) ja liittyjä linkin fragmentista
+// (getUrlConfig -> boot -> merged.encKey) - molemmat päätyvät samaan
+// currentCfg-olioon startPackTrackerin kautta, ja cfg tallentuu kokonaisuutena
+// hauku_config_v1:een (saveConfig) ilman mitään erillistä avainsäilöä. Aiempi
+// versio luki avainta vain erillisestä hauku_enc_key_v1-paikasta, joka täyttyi
+// AINOASTAAN linkin fragmentin kautta - ryhmän luojan itse generoima avain ei
+// koskaan päätynyt sinne, mikä esti kirjoituksen kokonaan omalta ryhmän
+// perustajalta ("Salausavain puuttuu" -virhe vaikka avain oli olemassa
+// cfg.encKey:ssä).
 
 function bytesToBase64Url(bytes) {
   let binary = "";
@@ -961,35 +971,24 @@ function generateEncKey() {
 }
 
 // Lukee avaimen linkin #-fragmentista, jos sellainen on juuri nyt läsnä.
-// EI koskaan lue window.location.search:sta - vain hash.
+// EI koskaan lue window.location.search:sta - vain hash. Käytetään VAIN
+// getUrlConfig()-funktiossa liittymishetkellä, ei ajonaikaisessa
+// salauksessa/purussa (ks. getCryptoKey alla).
 function getFragmentEncKey() {
   const match = window.location.hash.match(/key=([A-Za-z0-9_-]+)/);
   return match ? match[1] : null;
 }
 
 // CryptoKey-olio cachetaan sessioon (ei lasketa uudelleen joka kirjoitus-
-// /lukukerralla). Palauttaa null jos avainta ei löydy mistään - kutsuvan
-// koodin pitää käsitellä tämä fail-closed-periaatteella (ks. valmistusohje
-// kohta 6.4): ei koskaan pudota takaisin selkokieliseen kirjoitukseen.
+// /lukukerralla). Palauttaa null jos avainta ei löydy currentCfg:stä -
+// kutsuvan koodin pitää käsitellä tämä fail-closed-periaatteella (ks.
+// valmistusohje kohta 6.4): ei koskaan pudota takaisin selkokieliseen
+// kirjoitukseen.
 let cachedCryptoKeyPromise = null;
 let cachedEncKeyString = null;
 
-// Palauttaa raa'an avainmerkkijonon (base64url) tai null. Lähde
-// tärkeysjärjestyksessä: 1) juuri avattu linkin fragmentti, 2) aiemmin
-// samalle laitteelle tallennettu avain (ks. valmistusohje kohta 6.1 -
-// localStorage hyväksytty tietoisesti, linkin uudelleenavaus on hyväksytty
-// palautumistapa jos se katoaa esim. iOS:n ITP:n takia).
-function loadOrCacheEncKeyString() {
-  const fromUrl = getFragmentEncKey();
-  if (fromUrl) {
-    localStorage.setItem(ENC_KEY_STORAGE, fromUrl);
-    return fromUrl;
-  }
-  return localStorage.getItem(ENC_KEY_STORAGE);
-}
-
 function getCryptoKey() {
-  const keyStr = loadOrCacheEncKeyString();
+  const keyStr = currentCfg?.encKey || null;
   if (!keyStr) return Promise.resolve(null);
   if (cachedCryptoKeyPromise && cachedEncKeyString === keyStr) return cachedCryptoKeyPromise;
   cachedEncKeyString = keyStr;
@@ -2144,7 +2143,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v61";
+const APP_VERSION = "v62";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
