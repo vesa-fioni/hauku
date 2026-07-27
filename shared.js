@@ -1197,6 +1197,58 @@ async function stopPackTracker() {
   currentAuth = null;
 }
 
+// Tunnistaa toisen kanavan koodin käyttäjän liittämästä tekstistä - joko
+// koko linkki (sisältää "pin=...") tai pelkkä raakakoodi sellaisenaan.
+function extractPinFromInput(raw) {
+  const trimmed = (raw || "").trim();
+  const match = trimmed.match(/pin=([A-Za-z0-9_-]+)/);
+  if (match) return match[1];
+  if (/^[A-Za-z0-9_-]+$/.test(trimmed) && trimmed.length > 0) return trimmed;
+  return null;
+}
+
+// Näytetään kun ryhmä vaatii toisen kanavan koodin (ks. HaukuData.
+// readGroupDoc) mutta tällä laitteella ei vielä ole sitä. Ei
+// taustaklikkaus-/peruutusmahdollisuutta tarkoituksella - fail-closed
+// (ks. hauku-salaus-valmistusohje.md kohta 6.4): ilman koodia sovellus ei
+// voi purkaa/salata mitään oikein, joten sen näyttäminen "toimivana" olisi
+// pahempi kuin pysähtyminen tähän. Palauttaa Promisen joka resolvoituu
+// tunnistettuun pin-merkkijonoon.
+function promptForSecondFactor(groupLabel) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "overlay";
+    overlay.style.display = "flex";
+    overlay.innerHTML = `
+      <div class="onboard-card">
+        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Ryhmä "${escapeHtml(groupLabel)}" vaatii toisen koodin</h2>
+        <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
+          Tämän ryhmän perustaja on ottanut käyttöön lisäsuojan. Liitä alle
+          joko toisen kanavan linkki kokonaisuudessaan, tai pelkkä koodi
+          jonka sait erikseen (esim. tekstiviestillä).
+        </p>
+        <input id="secondFactorInput" placeholder="Liitä koodi tai linkki tähän"
+          style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:15px; margin-bottom:8px; box-sizing:border-box;">
+        <p id="secondFactorError" style="font-size:12px; color:#dc2626; min-height:16px; margin:0 0 8px;"></p>
+        <button class="btn btn-primary" id="secondFactorSubmitBtn">Vahvista</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector("#secondFactorInput");
+    const errorEl = overlay.querySelector("#secondFactorError");
+    overlay.querySelector("#secondFactorSubmitBtn").addEventListener("click", () => {
+      const pin = extractPinFromInput(input.value);
+      if (!pin) {
+        errorEl.textContent = "Tunnistettavaa koodia ei löytynyt - tarkista että liitit oikean tekstin.";
+        return;
+      }
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve(pin);
+    });
+  });
+}
+
 async function startPackTracker(cfg) {
   await stopPackTracker();
 
@@ -1219,8 +1271,26 @@ async function startPackTracker(cfg) {
 
   initBatteryManager();
 
-  HaukuData.signInAnonymously(auth).then(() => {
+  HaukuData.signInAnonymously(auth).then(async () => {
     setStatus("Yhdistetty ryhmään: " + cfg.groupCode);
+
+    // Kirjoitetaan kansilehti VAIN jos tällä laitteella on pin (ks.
+    // HaukuData.writeGroupDoc - ei koskaan muuten, race condition -riski).
+    // Luetaan sitten aina, jotta havaitaan vaatiiko TÄMÄ ryhmä toisen
+    // koodin vaikka tämä laite ei vielä tiedä sitä (ks. keskustelu
+    // 25.7.2026 - "ei kysynyt mitään" -bugi, jossa laite jatkoi hiljaa
+    // väärällä, vain encKey:stä lasketulla avaimella).
+    await HaukuData.writeGroupDoc(db, cfg);
+    const { requiresSecondFactor } = await HaukuData.readGroupDoc(db, cfg);
+
+    if (requiresSecondFactor && !cfg.pin) {
+      setStatus("Tämä ryhmä vaatii toisen koodin.");
+      const pin = await promptForSecondFactor(cfg.groupName || cfg.groupCode);
+      cfg.pin = pin;
+      currentCfg = cfg; // getCryptoKey lukee currentCfg:tä - päivitys pakollinen heti
+      saveConfig(cfg);  // tallennetaan heti, ettei kysytä uudelleen samalla laitteella
+    }
+
     startListeningToGroup(db, cfg);
 
     if (isManuallyPaused()) {
@@ -1431,6 +1501,33 @@ const HaukuData = {
 
   signInAnonymously(auth) {
     return auth.signInAnonymously();
+  },
+
+  // "Kansilehti"-dokumentti (groups/{groupCode}, ei members-alikokoelmassa)
+  // - kertoo plaintext-lippuna vaatiiko ryhmä valinnaisen toisen kanavan
+  // koodin (ks. hauku-salaus-valmistusohje.md kohta 5). TÄRKEÄÄ: kirjoita
+  // TÄTÄ VAIN jos cfg.pin on totta tällä laitteella - laite joka ei
+  // itse tiedä pin:iä ei saa koskaan kirjoittaa tänne, ettei se vahingossa
+  // ylikirjoita lippua false:ksi race conditionin kautta (ks. keskustelu
+  // 25.7.2026). Kutsutaan startPackTrackerista joka sessiokäynnistyksellä -
+  // idempotentti, harmiton toistaa jos arvo ei muutu.
+  writeGroupDoc(db, cfg) {
+    if (!cfg.pin) return Promise.resolve();
+    return db.collection("groups").doc(cfg.groupCode).set(
+      { requiresSecondFactor: true },
+      { merge: true }
+    );
+  },
+
+  // Lukee kansilehden - palauttaa { requiresSecondFactor: boolean }.
+  // Puuttuva dokumentti/kenttä tulkitaan false:ksi (ei toista kanavaa
+  // käytössä) - turvallinen oletus koska se on myös oikea arvo kaikille
+  // vaiheen 1 -tason ryhmille jotka eivät koskaan käytä pin:iä.
+  readGroupDoc(db, cfg) {
+    return db.collection("groups").doc(cfg.groupCode).get().then((doc) => {
+      const data = doc.exists ? doc.data() : {};
+      return { requiresSecondFactor: !!data.requiresSecondFactor };
+    });
   },
 
   // Kirjoittaa jäsenen nykyisen sijainnin. lat/lng/accuracy/name/role
@@ -2529,7 +2626,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v68";
+const APP_VERSION = "v69";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan

@@ -29,9 +29,17 @@ service cloud.firestore {
 
     match /groups/{groupCode} {
 
-      // Ryhmän "kansilehti" (voi sisältää esim. luontiajan) - kuka tahansa kirjautunut voi lukea/luoda
+      // Ryhmän "kansilehti" - kuka tahansa kirjautunut voi lukea. Sisältää
+      // valinnaisen requiresSecondFactor-lipun (ks. hauku-salaus-
+      // valmistusohje.md kohta 5) - kirjoitetaan/päivitetään idempotentisti
+      // joka sessiokäynnistyksellä sillä laitteella joka tietää pin:in
+      // (ks. HaukuData.writeGroupDoc), joten sekä create että update pitää
+      // sallia. Arvo rajattu aina true:ksi kirjoituksessa - kukaan ei voi
+      // koskaan kirjoittaa false:aa tänne, joten kukaan ei voi kytkeä
+      // toisen kanavan vaatimusta pois toisen puolesta.
       allow read: if request.auth != null;
-      allow create: if request.auth != null;
+      allow create, update: if request.auth != null
+                             && request.resource.data.requiresSecondFactor == true;
 
       match /members/{memberId} {
 
