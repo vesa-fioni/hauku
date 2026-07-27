@@ -247,7 +247,69 @@ function renderConfigForm(existing, urlCfg) {
   `;
 }
 
+// Pakollinen väliaskel heti uuden ryhmän tallennuksen jälkeen, ennen kuin
+// karttaan siirrytään. Ks. keskustelu 25.7.2026: "Kopioi jakolinkki"
+// asetuksista ei riitä turvaventtiiliksi, koska käyttäjä voi sulkea koko
+// selaimen (tai varsinkin yksityisen ikkunan, joka pyyhkii kaiken
+// sulkemisen yhteydessä) koskaan käymättä siellä. Tämä dialogi pakottaa
+// linkin näkyviin ja tarjoaa kopioinnin juuri sillä ainoalla hetkellä kun
+// se on vielä mahdollista. Palauttaa Promisen joka resolvoituu kun
+// käyttäjä painaa "Jatka karttaan".
+function showSaveLinkNowDialog(cfg) {
+  return new Promise((resolve) => {
+    const link = buildShareLink(cfg);
+    const overlay = document.createElement("div");
+    overlay.className = "overlay";
+    overlay.style.display = "flex";
+    overlay.innerHTML = `
+      <div class="onboard-card">
+        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Tallenna ryhmäsi linkki nyt</h2>
+        <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
+          Tämä on ainoa kerta kun tämä linkki näytetään automaattisesti.
+          Jos suljet selaimen kopioimatta sitä (varsinkin yksityisessä/
+          inkognitoikkunassa), ryhmääsi <strong>"${escapeHtml(cfg.groupName)}"</strong>
+          ei voi enää avata uudelleen millään tavalla.
+        </p>
+        <button class="btn btn-primary" id="saveLinkCopyBtn">Kopioi linkki leikepöydälle</button>
+        <p id="saveLinkStatus" class="hint hint-ok" style="min-height:16px;"></p>
+        <button class="btn btn-secondary" id="saveLinkContinueBtn">Jatka karttaan</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const statusEl = overlay.querySelector("#saveLinkStatus");
+    overlay.querySelector("#saveLinkCopyBtn").addEventListener("click", () => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(() => {
+          statusEl.textContent = "Linkki kopioitu leikepöydälle!";
+        }).catch(() => { statusEl.textContent = link; });
+      } else {
+        statusEl.textContent = link;
+      }
+    });
+
+    // Ei taustaklikkaus-sulkemista tässä dialogissa tarkoituksella - toisin
+    // kuin muissa overlayissa, tämän pitää vaatia eksplisiittinen "Jatka"
+    // -painallus, ettei käyttäjä ohita sitä vahingossa juuri sillä hetkellä
+    // kun linkki on ainutkertaisesti näkyvissä.
+    overlay.querySelector("#saveLinkContinueBtn").addEventListener("click", () => {
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve();
+    });
+  });
+}
+
 function attachConfigFormHandlers(container, onSave) {
+  // Tunnistetaan onko tämä täysin tuore ryhmä (ensimmäinen onboarding, ei
+  // vielä mitään ryhmää) - renderConfigForm ei renderöi "Luo uusi ryhmä"
+  // -linkkiä ollenkaan tässä tapauksessa (ks. isNewGroup renderConfigFormissa).
+  // Asetetaan myös true:ksi jos "Luo uusi ryhmä" -toiminto käytetään alla.
+  // Käytetään päättämään näytetäänkö "tallenna linkkisi nyt" -dialogi
+  // tallennuksen yhteydessä (ks. keskustelu 25.7.2026 - jos käyttäjä sulkee
+  // koko selaimen/yksityisen ikkunan koskaan käymättä asetuksissa
+  // kopioimassa linkkiä erikseen, uuteen ryhmään ei muuten pääse takaisin).
+  let groupWasFreshlyCreated = !container.querySelector("#cfg_new_group_link");
+
   container.querySelector("#cfg_save").addEventListener("click", () => {
     const role = container.querySelector('input[name="cfg_role"]:checked')?.value || "hunter";
     const mapStyle = container.querySelector('input[name="cfg_mapStyle"]:checked')?.value || "osm";
@@ -276,7 +338,15 @@ function attachConfigFormHandlers(container, onSave) {
       return;
     }
     saveConfig(cfg);
-    onSave(cfg);
+    if (groupWasFreshlyCreated) {
+      // Pakollinen väliaskel ennen karttaan siirtymistä - ei riitä että
+      // linkki on kopioitavissa asetuksista MYÖHEMMIN, koska käyttäjä voi
+      // sulkea koko selaimen (tai yksityisen ikkunan, joka pyyhkii kaiken
+      // sulkemisen yhteydessä) koskaan palaamatta asetuksiin.
+      showSaveLinkNowDialog(cfg).then(() => onSave(cfg));
+    } else {
+      onSave(cfg);
+    }
   });
 
   // Kerää jakolinkin rakentamiseen tarvittavat kentät lomakkeesta. Käytetään
@@ -415,6 +485,7 @@ function showNewGroupWarningDialog(currentLabel, currentCfgForLink) {
         // Uusi ryhmä = uusi salausavain, ei vanhan uudelleenkäyttöä (ks.
         // hauku-salaus-valmistusohje.md kohta 3).
         container.querySelector("#cfg_encKey").value = generateEncKey();
+        groupWasFreshlyCreated = true;
         const nameInput = container.querySelector("#cfg_groupName");
         nameInput.value = "";
         nameInput.placeholder = "esim. Syyshirvijahti";
@@ -2312,7 +2383,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v66";
+const APP_VERSION = "v67";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
