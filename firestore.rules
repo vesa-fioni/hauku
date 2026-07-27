@@ -1,12 +1,28 @@
 rules_version = '2';
 
 // Pääsymalli:
-// - Ryhmäkoodi ON dokumentin ID (esim. "HIRVI24"). Koodin tietäminen = pääsy ryhmään.
+// - Liittymiskoodi ON dokumentin ID (pitkä satunnaismerkkijono). Koodin tietäminen = pääsy ryhmään.
 // - Kirjautuminen vaaditaan (anonyymi kirjautuminen riittää) jotta request.auth.uid on olemassa
 //   ja jokainen kirjoittaa vain omaan member-dokumenttiinsa (ei voi peukaloida muiden sijaintia).
 // - Kuka tahansa kirjautunut käyttäjä, joka tietää koodin, näkee koko ryhmän sijainnit.
 //   Tämä on tarkoituksella "jaettu salasana" -tyylinen suojaus, ei täysi käyttöoikeushallinta.
 //   Riittää harrastekäyttöön; EI sovi arkaluteisiin/kaupallisiin tarpeisiin sellaisenaan.
+//
+// - Sijaintidata (lat/lng) on asiakaspuolella salattu AES-GCM:llä ennen kirjoitusta
+//   ('enc' + 'iv' -kentät). Avain kulkee TIETOISESTI liittymislinkin #-fragmentissa
+//   (esim. "...#key=xyz"), EI liittymiskoodista johdettuna - liittymiskoodi on jo itsessään
+//   Firestore-polku (tämä dokumentin ID), joten avaimen johtaminen siitä ei suojaisi ketään
+//   joka pääsisi tähän tietokantaan käsiksi ilman koko linkkiä (ks. hauku-salaus-
+//   valmistusohje.md kohta 3 - fragmentti ei koskaan lähde selaimesta minnekään verkkoon).
+//   Firestoressa ei näy koskaan selkokielisiä koordinaatteja - säännöt vain varmistavat
+//   rakenteen (oikeat kentät, oikeat tyypit), eivät sisältöä, koska palvelin ei tiedä
+//   avainta eikä pysty purkamaan salausta - tämä pätee riippumatta siitä mistä avain on
+//   peräisin, joten sääntölogiikka itsessään ei muuttunut fragmenttimalliin siirryttäessä,
+//   vain se MISTÄ asiakaspuoli avaimen saa.
+//
+// - Metadata (role, name, accuracy, updatedAt, expiresAt, alertAt) EI ole salattua -
+//   vain lat/lng on säännellyn 'enc'/'iv'-parin sisällä. Tämä on tietoinen rajaus
+//   (ks. valmistusohje kohta 1), säännöt eivät siis vaadi/rajoita näitä kenttiä erikseen.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -19,23 +35,31 @@ service cloud.firestore {
 
       match /members/{memberId} {
 
-        // Kuka tahansa kirjautunut, joka tietää ryhmäkoodin (eli osaa kysyä tätä polkua), saa lukea
-        // kaikkien jäsenten sijainnit.
+        // Kuka tahansa kirjautunut, joka tietää liittymiskoodin (eli osaa kysyä tätä polkua), saa lukea
+        // kaikkien jäsenten salatun datan.
         allow read: if request.auth != null;
 
         // Kirjoittaa saa VAIN oman dokumenttinsa - memberId on aina kirjautuneen käyttäjän uid.
+        // Vaaditaan salattu blob ('enc' + 'iv') selkokielisten koordinaattien sijaan. Kattaa myös
+        // haukkuhälytyksen alertAt-päivityksen (merge), koska Firestore täydentää puuttuvat
+        // kentät olemassa olevasta dokumentista - hasAll täyttyy jos enc/iv on kirjoitettu
+        // aiemmin samaan dokumenttiin (normaali tilanne, sijainti kirjoitetaan ennen hälytystä).
         allow create, update: if request.auth != null
                                && request.auth.uid == memberId
-                               && request.resource.data.keys().hasAll(['lat','lng','updatedAt','role','name'])
-                               && request.resource.data.lat is number
-                               && request.resource.data.lng is number;
+                               && request.resource.data.keys().hasAll(['enc','iv','updatedAt','expiresAt'])
+                               && request.resource.data.enc is string
+                               && request.resource.data.iv is string;
 
         allow delete: if request.auth != null && request.auth.uid == memberId;
 
         // Historiapisteet jälkeä varten: groups/{code}/members/{uid}/track/{autoId}
         match /track/{pointId} {
           allow read: if request.auth != null;
-          allow create: if request.auth != null && request.auth.uid == memberId;
+          allow create: if request.auth != null
+                         && request.auth.uid == memberId
+                         && request.resource.data.keys().hasAll(['enc','iv','timestamp','expiresAt'])
+                         && request.resource.data.enc is string
+                         && request.resource.data.iv is string;
         }
       }
     }
