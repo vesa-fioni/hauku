@@ -1214,6 +1214,12 @@ function extractPinFromInput(raw) {
 // voi purkaa/salata mitään oikein, joten sen näyttäminen "toimivana" olisi
 // pahempi kuin pysähtyminen tähän. Palauttaa Promisen joka resolvoituu
 // tunnistettuun pin-merkkijonoon.
+// Palauttaa Promisen joka resolvoituu tunnistettuun pin-merkkijonoon, tai
+// null:iin jos käyttäjä painaa "Peruuta" (ks. keskustelu 25.7.2026 - alkuun
+// tällä dialogilla ei ollut mitään ulospääsyä jos koodia ei ollut vielä
+// saatavilla, jolloin käyttäjä jäi täysin jumiin). Peruuttaminen EI tarkoita
+// että avain lasketaan puutteellisena - startPackTracker pysäyttää
+// lähetyksen/kuuntelun kokonaan tässä tapauksessa, ks. alla.
 function promptForSecondFactor(groupLabel) {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -1231,6 +1237,7 @@ function promptForSecondFactor(groupLabel) {
           style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:15px; margin-bottom:8px; box-sizing:border-box;">
         <p id="secondFactorError" style="font-size:12px; color:#dc2626; min-height:16px; margin:0 0 8px;"></p>
         <button class="btn btn-primary" id="secondFactorSubmitBtn">Vahvista</button>
+        <button class="btn btn-secondary" id="secondFactorCancelBtn">Ei ole koodia vielä - peruuta</button>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -1246,7 +1253,60 @@ function promptForSecondFactor(groupLabel) {
       if (overlay.parentNode) document.body.removeChild(overlay);
       resolve(pin);
     });
+    overlay.querySelector("#secondFactorCancelBtn").addEventListener("click", () => {
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve(null);
+    });
   });
+}
+
+// Käynnistää varsinaisen kuuntelun/lähetyksen kun avain (mahdollinen pin
+// mukaan lukien) on kunnossa. Eriytetty omaksi funktioksi, jotta sitä
+// voidaan kutsua myös myöhemmin - ks. retrySecondFactor alla - eikä vain
+// suoraan sisäkkäisenä ensimmäisellä kirjautumiskerralla.
+function beginNormalOperation(db, auth, cfg) {
+  startListeningToGroup(db, cfg);
+
+  if (isManuallyPaused()) {
+    isSending = false;
+    setStatus("Lähetys pysäytetty");
+    setPauseButtonLabel(false);
+  } else {
+    startSendingLocation(db, auth, cfg);
+    setPauseButtonLabel(true);
+  }
+
+  // Jatketaan äänenkuuntelua automaattisesti jos se oli päällä ennen
+  // sivun uudelleenlatausta (sama periaate kuin hauku_paused_v1:lla).
+  if (cfg.role === "dog" && isListeningEnabled()) {
+    startSoundDetection(db, cfg);
+  }
+}
+
+// Asettaa tilariville klikattavan tekstin joka avaa toisen kanavan kyselyn
+// uudelleen - käytetään kun käyttäjä on aiemmin painanut "Peruuta" eikä
+// koodia ollut vielä saatavilla (ks. keskustelu 25.7.2026 - dialogi oli
+// aiemmin umpikuja, ei tarjonnut mitään tapaa yrittää myöhemmin uudelleen).
+function setRetryableSecondFactorStatus(db, auth, cfg) {
+  const el = document.getElementById("statusText");
+  if (!el) return;
+  el.textContent = "Tarvitset toisen koodin - kosketa tästä kun se on saatavilla";
+  el.style.textDecoration = "underline";
+  el.style.cursor = "pointer";
+  el.onclick = async () => {
+    const pin = await promptForSecondFactor(cfg.groupName || cfg.groupCode);
+    if (pin) {
+      el.style.textDecoration = "";
+      el.style.cursor = "";
+      el.onclick = null;
+      cfg.pin = pin;
+      currentCfg = cfg;
+      saveConfig(cfg);
+      beginNormalOperation(db, auth, cfg);
+    }
+    // Jos peruutetaan uudestaan, tila (ja klikattavuus) pysyy samana -
+    // ei tarvitse kutsua tätä funktiota uudelleen.
+  };
 }
 
 async function startPackTracker(cfg) {
@@ -1286,27 +1346,20 @@ async function startPackTracker(cfg) {
     if (requiresSecondFactor && !cfg.pin) {
       setStatus("Tämä ryhmä vaatii toisen koodin.");
       const pin = await promptForSecondFactor(cfg.groupName || cfg.groupCode);
+      if (!pin) {
+        // Peruutettu - ei koodia vielä saatavilla. EI aloiteta kuuntelua/
+        // lähetystä väärällä/puuttuvalla avaimella (fail-closed) - näytetään
+        // sen sijaan klikattava tila jolla voi yrittää uudelleen kun koodi
+        // on saatu. Ei umpikuja, mutta ei myöskään toimi näennäisesti.
+        setRetryableSecondFactorStatus(db, auth, cfg);
+        return;
+      }
       cfg.pin = pin;
       currentCfg = cfg; // getCryptoKey lukee currentCfg:tä - päivitys pakollinen heti
       saveConfig(cfg);  // tallennetaan heti, ettei kysytä uudelleen samalla laitteella
     }
 
-    startListeningToGroup(db, cfg);
-
-    if (isManuallyPaused()) {
-      isSending = false;
-      setStatus("Lähetys pysäytetty");
-      setPauseButtonLabel(false);
-    } else {
-      startSendingLocation(db, auth, cfg);
-      setPauseButtonLabel(true);
-    }
-
-    // Jatketaan äänenkuuntelua automaattisesti jos se oli päällä ennen
-    // sivun uudelleenlatausta (sama periaate kuin hauku_paused_v1:lla).
-    if (cfg.role === "dog" && isListeningEnabled()) {
-      startSoundDetection(db, cfg);
-    }
+    beginNormalOperation(db, auth, cfg);
   }).catch(err => {
     setStatus("Kirjautumisvirhe: " + err.message);
   });
@@ -2626,7 +2679,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v69";
+const APP_VERSION = "v70";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
