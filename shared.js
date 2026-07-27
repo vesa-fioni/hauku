@@ -872,9 +872,7 @@ function startPackTracker(cfg) {
   if (listenBtn) listenBtn.style.display = cfg.role === "dog" ? "inline-block" : "none";
   if (cfg.role !== "dog" && isListening) stopSoundDetection();
 
-  firebase.initializeApp(cfg.firebase);
-  const auth = firebase.auth();
-  const db = firebase.firestore();
+  const { auth, db } = HaukuData.initFirebase(cfg);
 
   currentAuth = auth;
   currentDb = db;
@@ -884,7 +882,7 @@ function startPackTracker(cfg) {
 
   initBatteryManager();
 
-  auth.signInAnonymously().then(() => {
+  HaukuData.signInAnonymously(auth).then(() => {
     setStatus("Yhdistetty ryhmään: " + cfg.groupCode);
     startListeningToGroup(db, cfg);
 
@@ -906,6 +904,100 @@ function startPackTracker(cfg) {
     setStatus("Kirjautumisvirhe: " + err.message);
   });
 }
+
+// ---- Firestore-tietokerros (HaukuData) ----
+// Kaikki raa'at db.collection()/onSnapshot()-kutsut kootaan tähän yhteen
+// paikkaan. Muu koodi (kartta, popupit, hälytykset) kutsuu näitä funktioita
+// eikä koskaan koske Firestoreen suoraan - tarkoitus on että kun salaus
+// (ks. hauku-salaus-valmistusohje.md) toteutetaan, muutos tehdään VAIN
+// tähän lohkoon (lat/lng <-> enc/iv -muunnos writeMemberLocation/
+// writeTrackPoint-kirjoituksissa ja listenToMembers/listenToTrack-
+// lukemisissa), ei mihinkään muualle tiedostossa.
+
+function memberDocRef(db, cfg, uid) {
+  return db.collection("groups").doc(cfg.groupCode).collection("members").doc(uid);
+}
+
+function membersCollectionRef(db, cfg) {
+  return db.collection("groups").doc(cfg.groupCode).collection("members");
+}
+
+const HaukuData = {
+  // Alustaa Firebase-yhteyden annetulla konfiguraatiolla. Palauttaa
+  // {auth, db} - kutsuvan koodin ei tarvitse koskea firebase.*-nimiavaruuteen
+  // suoraan tämän jälkeen (paitsi Timestamp-apufunktioissa alla).
+  initFirebase(cfg) {
+    firebase.initializeApp(cfg.firebase);
+    return { auth: firebase.auth(), db: firebase.firestore() };
+  },
+
+  signInAnonymously(auth) {
+    return auth.signInAnonymously();
+  },
+
+  // Kirjoittaa jäsenen nykyisen sijainnin. extraFields sisältää roolin,
+  // nimen ja akkutiedot - kaikki mitä ei liity itse koordinaattiin.
+  // TODO(salaus): kun hauku-salaus-valmistusohje.md toteutetaan, lat/lng
+  // korvataan tässä enc/iv-kentillä avaimella salattuna ennen .set()-kutsua.
+  writeMemberLocation(db, cfg, uid, { lat, lng, accuracy, extraFields }) {
+    // expiresAt: Firestoren TTL-käytäntö poistaa dokumentin automaattisesti
+    // tämän ajan jälkeen. 24h riittää yhdelle metsästyspäivälle - kasvata
+    // tarvittaessa (esim. useamman päivän reissu).
+    const expiresAt = firebase.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000);
+    return memberDocRef(db, cfg, uid).set({
+      lat, lng, accuracy,
+      updatedAt: firebase.firestore.Timestamp.now(),
+      expiresAt,
+      ...extraFields
+    }, { merge: true });
+  },
+
+  // Kirjoittaa yhden jäljen pisteen koiran track-alikokoelmaan. accuracy
+  // tallennetaan myös tänne, jotta näyttöpuolen tarkkuussuodatin
+  // (filterImplausibleJumps) voi hylätä epätarkat pisteet jo tallennetusta
+  // jäljestä, ei vain uusia kirjoitettaessa.
+  // TODO(salaus): sama enc/iv-muunnos kuin writeMemberLocationissa.
+  writeTrackPoint(db, cfg, uid, { lat, lng, accuracy }) {
+    const expiresAt = firebase.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000);
+    return memberDocRef(db, cfg, uid).collection("track").add({
+      lat, lng, accuracy,
+      timestamp: firebase.firestore.Timestamp.now(),
+      expiresAt
+    });
+  },
+
+  // Haukkuhälytys - ei koordinaatteja, ei tarvitse salausta.
+  writeAlert(db, cfg, uid) {
+    return memberDocRef(db, cfg, uid).set(
+      { alertAt: firebase.firestore.Timestamp.now() },
+      { merge: true }
+    );
+  },
+
+  // Kuuntelee koko ryhmän jäsenlistaa (merkit, hälytykset, akku). onChange
+  // saa raakan snapshotin - purku (kun salaus toteutetaan) tapahtuisi tässä,
+  // ennen onChange-kutsua, jotta kutsuva koodi näkee aina valmiiksi puretun
+  // lat/lng:n riippumatta siitä onko salaus päällä.
+  // TODO(salaus): enc/iv -> lat/lng -purku tähän, ennen onChange(snapshot).
+  listenToMembers(db, cfg, { onChange, onError }) {
+    return membersCollectionRef(db, cfg).onSnapshot(onChange, onError);
+  },
+
+  // Kuuntelee jäsenlistaa koiran jäljen (trail) rakentamista varten - erillinen
+  // kuuntelija koska tämä ajaa oman track-alikuuntelijan käynnistyksen jokaiselle
+  // koira-roolissa olevalle jäsenelle (ks. listenToTrack).
+  listenToDogRoster(db, cfg, onSnapshotCb) {
+    return membersCollectionRef(db, cfg).onSnapshot(onSnapshotCb);
+  },
+
+  // Kuuntelee yhden jäsenen jälkeä (viimeisimmät 500 pistettä).
+  // TODO(salaus): purku tähän myös, samalla periaatteella kuin listenToMembers.
+  listenToTrack(db, cfg, uid, onSnapshotCb) {
+    return memberDocRef(db, cfg, uid).collection("track")
+      .orderBy("timestamp").limitToLast(500)
+      .onSnapshot(onSnapshotCb);
+  }
+};
 
 function haversineMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000; // maapallon säde metreinä
@@ -994,33 +1086,18 @@ function startSendingLocation(db, auth, cfg) {
     consecutiveRejects = 0;
     lastGoodFix = { lat, lng, time: now };
 
-    const memberRef = db.collection("groups").doc(cfg.groupCode)
-      .collection("members").doc(uid);
-
-    // expiresAt: Firestoren TTL-käytäntö poistaa dokumentin automaattisesti tämän ajan jälkeen.
-    // 24h riittää yhdelle metsästyspäivälle - kasvata tarvittaessa (esim. useamman päivän reissu).
-    const expiresAt = firebase.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000);
-
-    memberRef.set({
-      lat, lng,
-      accuracy: pos.coords.accuracy,
-      role: cfg.role,
-      name: cfg.name,
-      updatedAt: firebase.firestore.Timestamp.now(),
-      expiresAt,
-      ...currentBatteryFields()
-    }, { merge: true });
+    HaukuData.writeMemberLocation(db, cfg, uid, {
+      lat, lng, accuracy: pos.coords.accuracy,
+      extraFields: {
+        role: cfg.role,
+        name: cfg.name,
+        ...currentBatteryFields()
+      }
+    });
 
     // Jälki (track) tallennetaan vain koiramoodissa - metsästäjän reittiä ei ole tarpeen seurata.
-    // accuracy tallennetaan myös tänne, jotta näyttöpuolen tarkkuussuodatin (filterImplausibleJumps)
-    // voi hylätä epätarkat pisteet jo tallennetusta jäljestä, ei vain uusia kirjoitettaessa.
     if (cfg.role === "dog") {
-      memberRef.collection("track").add({
-        lat, lng,
-        accuracy,
-        timestamp: firebase.firestore.Timestamp.now(),
-        expiresAt
-      });
+      HaukuData.writeTrackPoint(db, cfg, uid, { lat, lng, accuracy });
     }
 
     setStatus("Lähetetään sijaintia... (" + new Date().toLocaleTimeString() + ")");
@@ -1249,8 +1326,8 @@ function startListeningToGroup(db, cfg) {
   // ensimmäiseen sijaintiin - ks. fallbackZoomAllowed-kommentti yllä.
   setTimeout(() => { fallbackZoomAllowed = true; }, 4000);
 
-  db.collection("groups").doc(cfg.groupCode).collection("members")
-    .onSnapshot((snapshot) => {
+  HaukuData.listenToMembers(db, cfg, {
+    onChange: (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         const uid = change.doc.id;
         const data = change.doc.data();
@@ -1353,10 +1430,11 @@ function startListeningToGroup(db, cfg) {
       // näkymä sovitetaan uudelleen (updateFollowView tarkistaa itse onko
       // käyttäjä juuri panoroinut käsin, ks. followSuppressedByUser).
       updateFollowView();
-    }, err => setStatus("Virhe kuunnellessa ryhmää: " + err.message));
+    },
+    onError: err => setStatus("Virhe kuunnellessa ryhmää: " + err.message)
+  });
 
-  db.collection("groups").doc(cfg.groupCode).collection("members")
-    .onSnapshot((snapshot) => {
+  HaukuData.listenToDogRoster(db, cfg, (snapshot) => {
       snapshot.docs.forEach((doc) => {
         const uid = doc.id;
         if (trails[uid]) return;
@@ -1364,9 +1442,7 @@ function startListeningToGroup(db, cfg) {
 
         trails[uid] = L.polyline([], { color: getMapTheme().trail, weight: 3 }).addTo(map);
 
-        db.collection("groups").doc(cfg.groupCode).collection("members").doc(uid)
-          .collection("track").orderBy("timestamp").limitToLast(500)
-          .onSnapshot((trackSnap) => {
+        HaukuData.listenToTrack(db, cfg, uid, (trackSnap) => {
             const rawPoints = trackSnap.docs.map(d => ({
               lat: d.data().lat,
               lng: d.data().lng,
@@ -1379,7 +1455,7 @@ function startListeningToGroup(db, cfg) {
             // väliin (pitkän tauon yli) piirtyy yhdistävää viivaa.
             const segments = filterImplausibleJumps(rawPoints);
             trails[uid].setLatLngs(segments.map(seg => seg.map(p => [p.lat, p.lng])));
-          });
+        });
       });
     });
 }
@@ -1780,8 +1856,7 @@ function playAlertBeep() {
 function writeAlert(db, cfg) {
   const uid = currentAuth?.currentUser?.uid;
   if (!uid) return;
-  db.collection("groups").doc(cfg.groupCode).collection("members").doc(uid)
-    .set({ alertAt: firebase.firestore.Timestamp.now() }, { merge: true });
+  HaukuData.writeAlert(db, cfg, uid);
 }
 
 function startSoundDetection(db, cfg) {
@@ -1895,7 +1970,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v59";
+const APP_VERSION = "v60";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
