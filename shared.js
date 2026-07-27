@@ -68,6 +68,12 @@ function getUrlConfig() {
   });
   if (Object.keys(fb).length > 0) result.firebase = fb;
 
+  // Salausavain luetaan TIETOISESTI vain URL:n #-fragmentista, ei
+  // window.location.search:sta - ks. hauku-salaus-valmistusohje.md kohta 3.
+  // Fragmentti ei koskaan lähde selaimesta minnekään verkkoon.
+  const encKey = getFragmentEncKey();
+  if (encKey) result.encKey = encKey;
+
   return result;
 }
 
@@ -97,6 +103,12 @@ function buildShareLink(cfg) {
       if (v) url.searchParams.set(k, v);
     });
   }
+  // Salausavain kulkee TIETOISESTI #-fragmentissa, ei searchParams:ssa -
+  // fragmentti ei koskaan lähde selaimesta minnekään verkkoon (ei edes
+  // Haukun omalle sivustolle), toisin kuin kyselyparametrit. Ks.
+  // hauku-salaus-valmistusohje.md kohta 3. Tämän TÄYTYY olla viimeinen
+  // askel, koska url.hash-asetus ei saa sekoittua searchParams-muutoksiin.
+  if (cfg.encKey) url.hash = "key=" + cfg.encKey;
   return url.toString();
 }
 
@@ -111,6 +123,11 @@ function renderConfigForm(existing, urlCfg) {
   // Jos mikään ei vielä anna koodia (täysin uusi käyttäjä), generoidaan uusi satunnaiskoodi tässä,
   // ja se pysyy samana koko lomakkeen elinkaaren ajan (talteen otettu piilokenttään).
   const groupCodeValue = existing?.groupCode || urlCfg.groupCode || generateGroupCode();
+  // Salausavain generoidaan samaan tapaan ja samalla hetkellä kuin
+  // ryhmäkoodi - jokaisella uudella ryhmällä on aina oma avaimensa, joka
+  // pysyy piilokentässä koko lomakkeen elinkaaren ajan (ks. groupCodeValue
+  // yllä). Ks. hauku-salaus-valmistusohje.md kohta 3.
+  const encKeyValue = existing?.encKey || urlCfg.encKey || generateEncKey();
   const groupNameValue = existing?.groupName || urlCfg.groupName || "";
   const isNewGroup = !existing?.groupCode && !urlCfg.groupCode;
 
@@ -124,6 +141,7 @@ function renderConfigForm(existing, urlCfg) {
     <label>Ryhmän nimi</label>
     <input id="cfg_groupName" placeholder="esim. Syyshirvijahti" value="${groupNameValue}">
     <input type="hidden" id="cfg_group" value="${groupCodeValue}">
+    <input type="hidden" id="cfg_encKey" value="${encKeyValue}">
     ${isNewGroup
       ? `<p class="hint">Uusi ryhmä luodaan tallennettaessa - jaa linkki tallennuksen jälkeen kutsuaksesi muut.</p>`
       : `<p class="hint">
@@ -239,6 +257,7 @@ function attachConfigFormHandlers(container, onSave) {
     const groupName = container.querySelector("#cfg_groupName").value.trim() || groupCode;
     const cfg = {
       groupCode,
+      encKey: container.querySelector("#cfg_encKey").value.trim(),
       groupName,
       name: container.querySelector("#cfg_name").value.trim() || "Tuntematon",
       role,
@@ -266,6 +285,7 @@ function attachConfigFormHandlers(container, onSave) {
   function collectShareCfg() {
     return {
       groupCode: container.querySelector("#cfg_group").value.trim(),
+      encKey: container.querySelector("#cfg_encKey").value.trim(),
       groupName: container.querySelector("#cfg_groupName").value.trim(),
       firebase: {
         apiKey: container.querySelector("#cfg_apiKey").value.trim(),
@@ -332,6 +352,9 @@ function attachConfigFormHandlers(container, onSave) {
     newGroupLink.addEventListener("click", (e) => {
       e.preventDefault();
       container.querySelector("#cfg_group").value = generateGroupCode();
+      // Uusi ryhmä = uusi salausavain, ei vanhan uudelleenkäyttöä (ks.
+      // hauku-salaus-valmistusohje.md kohta 3).
+      container.querySelector("#cfg_encKey").value = generateEncKey();
       const nameInput = container.querySelector("#cfg_groupName");
       nameInput.value = "";
       nameInput.placeholder = "esim. Syyshirvijahti";
@@ -905,6 +928,114 @@ function startPackTracker(cfg) {
   });
 }
 
+// ---- Salaus (fragmenttiavain) ----
+// Ks. hauku-salaus-valmistusohje.md. Vaihe 1: yksi jaettu avain kaikilla
+// ryhmän jäsenillä, kulkee linkin #-fragmentissa (esim. "...#key=xyz"),
+// EI KOSKAAN palvelimelle eikä mihinkään Firestore-kenttään. Koska avain on
+// koneen arpoma 256-bittinen satunnaisluku (ei ihmisen keksimä salasana),
+// sitä käytetään suoraan AES-GCM-avaimena - PBKDF2-tyyppistä hidasta
+// avaimenjohtoa ei tarvita tässä vaiheessa. Valinnainen toinen kanava
+// (QR/pidempi koodi, valmistusohjeen kohta 5) ei ole vielä toteutettu -
+// tämä on vain vaiheen 1 (perussalaus) koodi.
+
+const ENC_KEY_STORAGE = "hauku_enc_key_v1";
+
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlToBytes(str) {
+  const padded = str.replace(/-/g, "+").replace(/_/g, "/").padEnd(str.length + (4 - (str.length % 4)) % 4, "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// Generoi uuden 256-bittisen satunnaisavaimen (käytetään ryhmän luonnissa,
+// samaan tapaan kuin generateGroupCode() - ks. renderConfigForm).
+function generateEncKey() {
+  return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+// Lukee avaimen linkin #-fragmentista, jos sellainen on juuri nyt läsnä.
+// EI koskaan lue window.location.search:sta - vain hash.
+function getFragmentEncKey() {
+  const match = window.location.hash.match(/key=([A-Za-z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+// CryptoKey-olio cachetaan sessioon (ei lasketa uudelleen joka kirjoitus-
+// /lukukerralla). Palauttaa null jos avainta ei löydy mistään - kutsuvan
+// koodin pitää käsitellä tämä fail-closed-periaatteella (ks. valmistusohje
+// kohta 6.4): ei koskaan pudota takaisin selkokieliseen kirjoitukseen.
+let cachedCryptoKeyPromise = null;
+let cachedEncKeyString = null;
+
+// Palauttaa raa'an avainmerkkijonon (base64url) tai null. Lähde
+// tärkeysjärjestyksessä: 1) juuri avattu linkin fragmentti, 2) aiemmin
+// samalle laitteelle tallennettu avain (ks. valmistusohje kohta 6.1 -
+// localStorage hyväksytty tietoisesti, linkin uudelleenavaus on hyväksytty
+// palautumistapa jos se katoaa esim. iOS:n ITP:n takia).
+function loadOrCacheEncKeyString() {
+  const fromUrl = getFragmentEncKey();
+  if (fromUrl) {
+    localStorage.setItem(ENC_KEY_STORAGE, fromUrl);
+    return fromUrl;
+  }
+  return localStorage.getItem(ENC_KEY_STORAGE);
+}
+
+function getCryptoKey() {
+  const keyStr = loadOrCacheEncKeyString();
+  if (!keyStr) return Promise.resolve(null);
+  if (cachedCryptoKeyPromise && cachedEncKeyString === keyStr) return cachedCryptoKeyPromise;
+  cachedEncKeyString = keyStr;
+  cachedCryptoKeyPromise = crypto.subtle.importKey(
+    "raw", base64UrlToBytes(keyStr), "AES-GCM", false, ["encrypt", "decrypt"]
+  );
+  return cachedCryptoKeyPromise;
+}
+
+// Salaa {lat, lng} yhdeksi enc/iv-pariksi. IV arvotaan TUOREENA JOKA KERTA -
+// saman (avain, IV) -parin uudelleenkäyttö murtaisi AES-GCM:n luottamuksel-
+// lisuuden kokonaan (ks. valmistusohje kohta 6.3). Heittää virheen jos
+// avainta ei ole - kutsuvan koodin pitää estää kirjoitus tämän seurauksena,
+// ei koskaan pudota selkokieliseen (fail-closed, kohta 6.4).
+async function encryptLatLng(lat, lng) {
+  const key = await getCryptoKey();
+  if (!key) throw new Error("Salausavain puuttuu - avaa liittymislinkkisi uudelleen.");
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(JSON.stringify({ lat, lng }));
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
+  return {
+    enc: bytesToBase64Url(new Uint8Array(ciphertext)),
+    iv: bytesToBase64Url(iv)
+  };
+}
+
+// Purkaa enc/iv-parin takaisin {lat, lng}:ksi. Palauttaa null (ei heitä
+// virhettä) jos avain puuttuu tai purku epäonnistuu (väärä avain, korruptoi-
+// tunut data) - kutsuvan koodin pitää tällöin kohdella pistettä samaan tapaan
+// kuin puuttuvaa lat/lng:tä nykyisin (ohitetaan, ei näytetä, ei kaadeta
+// sovellusta). Tämä on tietoisesti hiljainen fail-closed lukupuolella, koska
+// yksittäisen pisteen purkuvirhe (esim. testaamaton jakokanava söi fragmentin)
+// ei saa estää muun ryhmän näkymistä.
+async function decryptLatLng(enc, iv) {
+  const key = await getCryptoKey();
+  if (!key) return null;
+  try {
+    const plaintextBuf = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64UrlToBytes(iv) }, key, base64UrlToBytes(enc)
+    );
+    return JSON.parse(new TextDecoder().decode(plaintextBuf));
+  } catch (e) {
+    return null;
+  }
+}
+
 // ---- Firestore-tietokerros (HaukuData) ----
 // Kaikki raa'at db.collection()/onSnapshot()-kutsut kootaan tähän yhteen
 // paikkaan. Muu koodi (kartta, popupit, hälytykset) kutsuu näitä funktioita
@@ -936,16 +1067,18 @@ const HaukuData = {
   },
 
   // Kirjoittaa jäsenen nykyisen sijainnin. extraFields sisältää roolin,
-  // nimen ja akkutiedot - kaikki mitä ei liity itse koordinaattiin.
-  // TODO(salaus): kun hauku-salaus-valmistusohje.md toteutetaan, lat/lng
-  // korvataan tässä enc/iv-kentillä avaimella salattuna ennen .set()-kutsua.
-  writeMemberLocation(db, cfg, uid, { lat, lng, accuracy, extraFields }) {
+  // nimen ja akkutiedot - kaikki mitä ei liity itse koordinaattiin, eikä
+  // siis salata (ks. hauku-salaus-valmistusohje.md kohta 1 - vain
+  // koordinaatit salataan, ei metadataa). accuracy pysyy myös selkokielisenä
+  // (ei osa uhkamallia, kohta 2).
+  async writeMemberLocation(db, cfg, uid, { lat, lng, accuracy, extraFields }) {
     // expiresAt: Firestoren TTL-käytäntö poistaa dokumentin automaattisesti
     // tämän ajan jälkeen. 24h riittää yhdelle metsästyspäivälle - kasvata
     // tarvittaessa (esim. useamman päivän reissu).
     const expiresAt = firebase.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000);
+    const { enc, iv } = await encryptLatLng(lat, lng);
     return memberDocRef(db, cfg, uid).set({
-      lat, lng, accuracy,
+      enc, iv, accuracy,
       updatedAt: firebase.firestore.Timestamp.now(),
       expiresAt,
       ...extraFields
@@ -956,11 +1089,11 @@ const HaukuData = {
   // tallennetaan myös tänne, jotta näyttöpuolen tarkkuussuodatin
   // (filterImplausibleJumps) voi hylätä epätarkat pisteet jo tallennetusta
   // jäljestä, ei vain uusia kirjoitettaessa.
-  // TODO(salaus): sama enc/iv-muunnos kuin writeMemberLocationissa.
-  writeTrackPoint(db, cfg, uid, { lat, lng, accuracy }) {
+  async writeTrackPoint(db, cfg, uid, { lat, lng, accuracy }) {
     const expiresAt = firebase.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000);
+    const { enc, iv } = await encryptLatLng(lat, lng);
     return memberDocRef(db, cfg, uid).collection("track").add({
-      lat, lng, accuracy,
+      enc, iv, accuracy,
       timestamp: firebase.firestore.Timestamp.now(),
       expiresAt
     });
@@ -974,13 +1107,29 @@ const HaukuData = {
     );
   },
 
-  // Kuuntelee koko ryhmän jäsenlistaa (merkit, hälytykset, akku). onChange
-  // saa raakan snapshotin - purku (kun salaus toteutetaan) tapahtuisi tässä,
-  // ennen onChange-kutsua, jotta kutsuva koodi näkee aina valmiiksi puretun
-  // lat/lng:n riippumatta siitä onko salaus päällä.
-  // TODO(salaus): enc/iv -> lat/lng -purku tähän, ennen onChange(snapshot).
+  // Kuuntelee koko ryhmän jäsenlistaa (merkit, hälytykset, akku). Purkaa
+  // enc/iv:n takaisin lat/lng:ksi TÄSSÄ, ennen onChange-kutsua, jotta kutsuva
+  // koodi näkee aina valmiiksi puretun sijainnin eikä tarvitse tietää mitään
+  // salauksesta. onChange saa taulukon {type, uid, data} - ei enää raakaa
+  // Firestore-snapshotia, koska purku on asynkroninen (Promise.all).
+  // Jos purku epäonnistuu yksittäiselle jäsenelle (väärä/puuttuva avain),
+  // data.lat/data.lng jäävät puuttumaan - kutsuva koodi ohittaa tällaiset jo
+  // valmiiksi (sama tarkistus kuin puuttuvalle sijainnille yleensä).
   listenToMembers(db, cfg, { onChange, onError }) {
-    return membersCollectionRef(db, cfg).onSnapshot(onChange, onError);
+    return membersCollectionRef(db, cfg).onSnapshot(async (snapshot) => {
+      const changes = await Promise.all(snapshot.docChanges().map(async (change) => {
+        const uid = change.doc.id;
+        if (change.type === "removed") return { type: change.type, uid, data: change.doc.data() };
+        const raw = change.doc.data();
+        const decoded = (raw.enc && raw.iv) ? await decryptLatLng(raw.enc, raw.iv) : null;
+        return {
+          type: change.type,
+          uid,
+          data: decoded ? { ...raw, lat: decoded.lat, lng: decoded.lng } : raw
+        };
+      }));
+      onChange(changes);
+    }, onError);
   },
 
   // Kuuntelee jäsenlistaa koiran jäljen (trail) rakentamista varten - erillinen
@@ -990,12 +1139,27 @@ const HaukuData = {
     return membersCollectionRef(db, cfg).onSnapshot(onSnapshotCb);
   },
 
-  // Kuuntelee yhden jäsenen jälkeä (viimeisimmät 500 pistettä).
-  // TODO(salaus): purku tähän myös, samalla periaatteella kuin listenToMembers.
+  // Kuuntelee yhden jäsenen jälkeä (viimeisimmät 500 pistettä). Purkaa
+  // jokaisen pisteen enc/iv:n lat/lng:ksi ennen kutsua - epäonnistuneet
+  // purut (esim. korruptoitunut piste) suodatetaan pois kokonaan sen sijaan
+  // että NaN-arvot päätyisivät filterImplausibleJumps-suodattimeen.
   listenToTrack(db, cfg, uid, onSnapshotCb) {
     return memberDocRef(db, cfg, uid).collection("track")
       .orderBy("timestamp").limitToLast(500)
-      .onSnapshot(onSnapshotCb);
+      .onSnapshot(async (trackSnap) => {
+        const decoded = await Promise.all(trackSnap.docs.map(async (d) => {
+          const raw = d.data();
+          const point = (raw.enc && raw.iv) ? await decryptLatLng(raw.enc, raw.iv) : null;
+          if (!point) return null;
+          return {
+            lat: point.lat,
+            lng: point.lng,
+            accuracy: raw.accuracy,
+            timeMs: raw.timestamp?.toMillis ? raw.timestamp.toMillis() : 0
+          };
+        }));
+        onSnapshotCb(decoded.filter(p => p !== null));
+      });
   }
 };
 
@@ -1093,11 +1257,19 @@ function startSendingLocation(db, auth, cfg) {
         name: cfg.name,
         ...currentBatteryFields()
       }
+    }).catch(err => {
+      // Fail-closed (ks. hauku-salaus-valmistusohje.md kohta 6.4): jos
+      // salaus epäonnistuu (esim. avain puuttuu), kirjoitus jää tekemättä
+      // eikä koskaan pudota selkokieliseen - virhe näytetään käyttäjälle
+      // suoraan sen sijaan että se häviäisi hiljaa konsoliin.
+      setStatus("Sijainnin lähetys epäonnistui: " + err.message);
     });
 
     // Jälki (track) tallennetaan vain koiramoodissa - metsästäjän reittiä ei ole tarpeen seurata.
     if (cfg.role === "dog") {
-      HaukuData.writeTrackPoint(db, cfg, uid, { lat, lng, accuracy });
+      HaukuData.writeTrackPoint(db, cfg, uid, { lat, lng, accuracy }).catch(err => {
+        setStatus("Jäljen tallennus epäonnistui: " + err.message);
+      });
     }
 
     setStatus("Lähetetään sijaintia... (" + new Date().toLocaleTimeString() + ")");
@@ -1327,18 +1499,12 @@ function startListeningToGroup(db, cfg) {
   setTimeout(() => { fallbackZoomAllowed = true; }, 4000);
 
   HaukuData.listenToMembers(db, cfg, {
-    onChange: (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        const uid = change.doc.id;
-        const data = change.doc.data();
-        if (!data.lat || !data.lng) return;
-
-        memberData[uid] = data;
-
-        const latlng = [data.lat, data.lng];
-        const name = data.name || "Tuntematon";
-
-        if (change.type === "removed") {
+    onChange: (changes) => {
+      changes.forEach(({ type, uid, data }) => {
+        // Poistokäsittely ENSIN, ennen lat/lng-tarkistusta: poistetun jäsenen
+        // datassa ei ole (eikä voi olla) purettua sijaintia, koska emme pura
+        // salausta poistotapahtumille - siivous ei silti saa riippua siitä.
+        if (type === "removed") {
           if (markers[uid]) { map.removeLayer(markers[uid]); delete markers[uid]; }
           if (alertTimers[uid]) { clearTimeout(alertTimers[uid]); delete alertTimers[uid]; }
           delete lastAlertSeen[uid];
@@ -1355,6 +1521,17 @@ function startListeningToGroup(db, cfg) {
           followedMembers.delete(uid);
           return;
         }
+
+        // data.lat/data.lng ovat tässä vaiheessa jo purettuja (HaukuData.
+        // listenToMembers hoiti purun) - puuttuvat jos purku epäonnistui
+        // (väärä/puuttuva avain) tai data on muuten vajaa. Kohdellaan samaan
+        // tapaan kuin ennenkin: ohitetaan hiljaa, ei kaadeta karttaa.
+        if (!data.lat || !data.lng) return;
+
+        memberData[uid] = data;
+
+        const latlng = [data.lat, data.lng];
+        const name = data.name || "Tuntematon";
 
         // Hälytyksen aktiivisuus lasketaan aikaleimasta paikallisesti (ei erillistä
         // kuittausta) - ks. hauku-haukkuhalytys-valmistusohje.md kohta 3.
@@ -1442,18 +1619,15 @@ function startListeningToGroup(db, cfg) {
 
         trails[uid] = L.polyline([], { color: getMapTheme().trail, weight: 3 }).addTo(map);
 
-        HaukuData.listenToTrack(db, cfg, uid, (trackSnap) => {
-            const rawPoints = trackSnap.docs.map(d => ({
-              lat: d.data().lat,
-              lng: d.data().lng,
-              accuracy: d.data().accuracy,
-              timeMs: d.data().timestamp?.toMillis ? d.data().timestamp.toMillis() : 0
-            }));
+        // points on jo valmiiksi purettu HaukuData.listenToTrack:issa
+        // ({lat, lng, accuracy, timeMs}) - ei tarvitse koskea enc/iv:hen
+        // täällä ollenkaan.
+        HaukuData.listenToTrack(db, cfg, uid, (points) => {
             // filterImplausibleJumps palauttaa nyt segmenttien taulukon
             // (ks. MAX_GAP_MS) - Leafletin multi-polyline-muoto piirtää
             // jokaisen segmentin erillisenä viivana ilman että segmenttien
             // väliin (pitkän tauon yli) piirtyy yhdistävää viivaa.
-            const segments = filterImplausibleJumps(rawPoints);
+            const segments = filterImplausibleJumps(points);
             trails[uid].setLatLngs(segments.map(seg => seg.map(p => [p.lat, p.lng])));
         });
       });
@@ -1970,7 +2144,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v60";
+const APP_VERSION = "v61";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -1992,13 +2166,15 @@ function resolveGroupConflict(existing, urlCfg) {
 
   if (!switchToLink) return existing;
 
-  // Vaihdetaan ryhmä - ryhmäkoodi, -nimi, Firebase-konfiguraatio ja mahdollinen
-  // linkiltä tuleva rooli otetaan käyttöön. Oma nimi ja muut henkilökohtaiset
-  // asetukset (karttatyyli, automaattipysäytys) säilytetään ennallaan.
+  // Vaihdetaan ryhmä - ryhmäkoodi, -nimi, salausavain, Firebase-konfiguraatio
+  // ja mahdollinen linkiltä tuleva rooli otetaan käyttöön. Oma nimi ja muut
+  // henkilökohtaiset asetukset (karttatyyli, automaattipysäytys) säilytetään
+  // ennallaan.
   return {
     ...existing,
     groupCode: urlCfg.groupCode,
     groupName: urlCfg.groupName || urlCfg.groupCode,
+    encKey: urlCfg.encKey || existing.encKey,
     firebase: urlCfg.firebase || existing.firebase,
     role: urlCfg.role || existing.role
   };
@@ -2039,6 +2215,7 @@ function boot() {
   const merged = existing ? { ...existing } : {};
   if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
   if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
+  if (!merged.encKey && urlCfg.encKey) merged.encKey = urlCfg.encKey;
   if (!merged.groupName && urlCfg.groupName) merged.groupName = urlCfg.groupName;
   if (!merged.role && urlCfg.role) merged.role = urlCfg.role;
   if (!merged.mapStyle) merged.mapStyle = urlCfg.mapStyle || "osm";
@@ -2047,6 +2224,12 @@ function boot() {
 
   const hasFirebase = merged.firebase && merged.firebase.apiKey && merged.firebase.projectId;
   const hasGroup = !!merged.groupCode;
+  // hasEncKey on tarkoituksella pakollinen ehto: laitteet joiden tallennettu
+  // konfiguraatio on peräisin ennen salausta (ei vielä encKey-kenttää)
+  // ohjataan kertaalleen takaisin onboarding-lomakkeeseen, joka generoi
+  // avaimen automaattisesti (ks. renderConfigForm, encKeyValue) - ks.
+  // hauku-salaus-valmistusohje.md kohta 6.5 (versioyhteensopivuus).
+  const hasEncKey = !!merged.encKey;
   const hasName = !!merged.name;
   const hasRole = !!merged.role;
 
@@ -2056,7 +2239,7 @@ function boot() {
   addPauseButton();
   addListenButton();
 
-  if (hasFirebase && hasGroup && hasName && hasRole) {
+  if (hasFirebase && hasGroup && hasEncKey && hasName && hasRole) {
     saveConfig(merged);
     startPackTracker(merged);
   } else {
