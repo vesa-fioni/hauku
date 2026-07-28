@@ -306,18 +306,9 @@ function renderConfigForm(existing, urlCfg, opts) {
 
         ${firebaseFields}
 
-        <button id="cfg_save" class="btn btn-primary">Tallenna ja aloita</button>
+        <button id="cfg_save" class="btn btn-primary">Tallenna</button>
         <p id="cfg_save_error" class="hint" style="color:#dc2626;"></p>
-        <button id="cfg_share" class="btn btn-secondary">Kopioi liittymislinkki</button>
-        <p class="hint">Liitä linkki itse haluamaasi viestiin (esim. sähköposti tai ryhmäkeskustelu).</p>
-        <button id="cfg_share_app" class="btn btn-secondary">Jaa... (esim. WhatsApp)</button>
-        <p class="hint">Avaa puhelimen omat jakovaihtoehdot valmiiksi täytetyllä viestillä.</p>
-        <p id="cfg_share_status" class="hint hint-ok"></p>
-        ${pinValue ? `
-        <button id="cfg_share_second" class="btn btn-secondary">Kopioi toisen kanavan linkki</button>
-        <p id="cfg_share_second_status" class="hint hint-ok"></p>
-        <p class="hint">Muista lähettää tämä eri viestillä kuin liittymislinkki. Vastaanottaja pääsee ryhmään avaamalla linkin - ei tarvitse kirjoittaa mitään.</p>
-        ` : ""}
+        ${isNewGroup ? "" : `<button id="cfg_invite" class="btn btn-secondary">Kutsu uusi jäsen ryhmään</button>`}
       </div>
 
       <p class="footnote">
@@ -548,6 +539,95 @@ async function establishGroupOnServer(cfg) {
   await HaukuData.writeGroupDoc(db, cfg);
 }
 
+// Käytettävyysparannus (27.7.2026): jakotoiminnot ("Kopioi liittymislinkki",
+// "Jaa...", "Kopioi toisen kanavan linkki") eivät enää ole aina näkyvissä
+// osana peruslomaketta - ne avautuvat tästä yhdestä "Kutsu uusi jäsen
+// ryhmään" -napista pyynnöstä. Tämä linjaa asetusnäkymän käytöksen sen
+// kanssa mikä on jo käytössä uuden ryhmän luonnissa: jakaminen on oma,
+// erillinen vaiheensa, ei aina näkyvissä osa lomaketta.
+//
+// Toisin kuin showSaveLinkNowDialog/showSecondFactorEnabledDialog, tämä
+// dialogi EI ole pakollinen/lukittu - ryhmä on jo olemassa eikä mitään
+// katoa jos käyttäjä sulkee tämän kopioimatta mitään (voi aina avata
+// uudelleen "Kutsu uusi jäsen ryhmään" -napista). Siksi tässä on tavallinen
+// sulje-nappi ja taustaklikkaus-sulkeminen, kuten asetusoverlayssakin.
+function showInviteDialog(cfg) {
+  const link = buildShareLink(cfg);
+  const hasSecondFactor = !!cfg.pin;
+  const secondLink = hasSecondFactor ? buildSecondFactorLink(cfg) : null;
+  const label = cfg.groupName || cfg.groupCode;
+
+  const overlay = document.createElement("div");
+  overlay.className = "overlay";
+  overlay.style.display = "flex";
+  overlay.innerHTML = `
+    <div class="onboard-card">
+      <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Kutsu ryhmään "${escapeHtml(label)}"</h2>
+      <button class="btn btn-primary" id="inviteCopyBtn">Kopioi liittymislinkki</button>
+      <p class="hint">Liitä linkki itse haluamaasi viestiin (esim. sähköposti tai ryhmäkeskustelu).</p>
+      <p id="inviteCopyStatus" class="hint hint-ok" style="min-height:16px;"></p>
+      <button class="btn btn-secondary" id="inviteShareAppBtn">Jaa... (esim. WhatsApp)</button>
+      <p class="hint">Avaa puhelimen omat jakovaihtoehdot valmiiksi täytetyllä viestillä.</p>
+      ${hasSecondFactor ? `
+      <button class="btn btn-secondary" id="inviteCopySecondBtn" style="margin-top:14px;">Kopioi toisen kanavan linkki</button>
+      <p id="inviteCopySecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
+      <p class="hint">Muista lähettää tämä eri viestillä kuin liittymislinkki. Vastaanottaja pääsee ryhmään avaamalla linkin - ei tarvitse kirjoittaa mitään.</p>
+      ` : ""}
+      <button class="btn btn-secondary" id="inviteCloseBtn">Valmis</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const closeOverlay = () => { if (overlay.parentNode) document.body.removeChild(overlay); };
+  overlay.querySelector("#inviteCloseBtn").addEventListener("click", closeOverlay);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeOverlay();
+  });
+
+  const copyStatusEl = overlay.querySelector("#inviteCopyStatus");
+  overlay.querySelector("#inviteCopyBtn").addEventListener("click", () => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(() => {
+        copyStatusEl.textContent = "Linkki kopioitu leikepöydälle!";
+      }).catch(() => { copyStatusEl.textContent = link; });
+    } else {
+      copyStatusEl.textContent = link;
+    }
+  });
+
+  // "Jaa..." - avaa laitteen oman jakovalikon (Web Share API), jossa
+  // WhatsApp on yleensä yksi vaihtoehto muiden joukossa. Jos Web Share API
+  // ei ole tuettu (esim. työpöytäselain), pudotaan suoraan wa.me-syvälinkkiin.
+  overlay.querySelector("#inviteShareAppBtn").addEventListener("click", () => {
+    const message = `Liity Hauku-ryhmään "${label}": ${link}`;
+    if (navigator.share) {
+      navigator.share({
+        title: "Hauku - liity ryhmään",
+        text: `Liity Hauku-ryhmään "${label}":`,
+        url: link,
+      }).catch(() => {
+        // Käyttäjä perui jakamisen tai selain esti sen hiljaa - ei tehdä
+        // mitään, linkki on silti "Kopioi liittymislinkki" -napin takana.
+      });
+    } else {
+      window.open("https://wa.me/?text=" + encodeURIComponent(message), "_blank");
+    }
+  });
+
+  if (hasSecondFactor) {
+    const secondStatusEl = overlay.querySelector("#inviteCopySecondStatus");
+    overlay.querySelector("#inviteCopySecondBtn").addEventListener("click", () => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(secondLink).then(() => {
+          secondStatusEl.textContent = "Toisen kanavan linkki kopioitu!";
+        }).catch(() => { secondStatusEl.textContent = secondLink; });
+      } else {
+        secondStatusEl.textContent = secondLink;
+      }
+    });
+  }
+}
+
 function attachConfigFormHandlers(container, onSave) {
   // Tunnistetaan onko tämä täysin tuore ryhmä (ensimmäinen onboarding, ei
   // vielä mitään ryhmää) - renderConfigForm ei renderöi "Luo uusi ryhmä"
@@ -624,13 +704,13 @@ function attachConfigFormHandlers(container, onSave) {
         await establishGroupOnServer(cfg);
       } catch (err) {
         saveBtn.disabled = false;
-        saveBtn.textContent = "Tallenna ja aloita";
+        saveBtn.textContent = "Tallenna";
         if (saveError) {
           saveError.textContent = "Ryhmän luonti epäonnistui - tarkista verkkoyhteys ja Firebase-tiedot, ja yritä uudelleen.";
         }
         return;
       }
-      saveBtn.textContent = "Tallenna ja aloita";
+      saveBtn.textContent = "Tallenna";
       saveBtn.disabled = false;
     }
 
@@ -655,8 +735,7 @@ function attachConfigFormHandlers(container, onSave) {
   });
 
   // Kerää jakolinkin rakentamiseen tarvittavat kentät lomakkeesta. Käytetään
-  // sekä "Kopioi liittymislinkki"- että "Jaa..."-napin käsittelijässä, jotta
-  // kenttien luku ei ole kahdessa paikassa.
+  // "Kutsu uusi jäsen ryhmään" -napin käsittelijässä.
   function collectShareCfg() {
     return {
       groupCode: container.querySelector("#cfg_group").value.trim(),
@@ -672,73 +751,26 @@ function attachConfigFormHandlers(container, onSave) {
     };
   }
 
-  container.querySelector("#cfg_share").addEventListener("click", () => {
-    const cfg = collectShareCfg();
-    if (!cfg.groupCode || !cfg.firebase.apiKey) {
-      alert("Täytä ryhmän nimi ja Firebase-tiedot ennen linkin jakamista.");
-      return;
-    }
-    const link = buildShareLink(cfg);
-    const statusEl = container.querySelector("#cfg_share_status");
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(link).then(() => {
-        statusEl.textContent = "Linkki kopioitu leikepöydälle!";
-      }).catch(() => { statusEl.textContent = link; });
-    } else {
-      statusEl.textContent = link;
-    }
-  });
-
-  // Toisen kanavan linkin uudelleenkopiointi (esim. uuden jäsenen
-  // kutsumiseksi myöhemmin olemassa olevaan lisäsuojattuun ryhmään) -
-  // näkyy vain jos tälle ryhmälle on jo aiemmin luotu pin (ks. groupField).
-  const shareSecondBtn = container.querySelector("#cfg_share_second");
-  if (shareSecondBtn) {
-    shareSecondBtn.addEventListener("click", () => {
+  // Käytettävyysparannus (27.7.2026): jakotoiminnot eivät enää roiku aina
+  // näkyvissä osana peruslomaketta - ne on siirretty omaan, pyynnöstä
+  // avautuvaan dialogiin (ks. showInviteDialog), samaan tapaan kuin uuden
+  // ryhmän luonnissa linkin jakaminen on jo omassa erillisessä vaiheessaan
+  // (showSaveLinkNowDialog) eikä aina näkyvissä lomakkeella. Nappi ei
+  // renderöidy ollenkaan täysin uudelle, vielä tallentamattomalle ryhmälle
+  // (ks. isNewGroup renderConfigFormissa) - sille ryhmälle jakaminen
+  // hoituu pakollisen "tallenna linkkisi nyt" -dialogin kautta heti
+  // Tallenna-napin painalluksen jälkeen.
+  const inviteBtn = container.querySelector("#cfg_invite");
+  if (inviteBtn) {
+    inviteBtn.addEventListener("click", () => {
       const cfg = collectShareCfg();
-      const secondLink = buildSecondFactorLink(cfg);
-      const statusEl = container.querySelector("#cfg_share_second_status");
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(secondLink).then(() => {
-          statusEl.textContent = "Toisen kanavan linkki kopioitu!";
-        }).catch(() => { statusEl.textContent = secondLink; });
-      } else {
-        statusEl.textContent = secondLink;
+      if (!cfg.groupCode || !cfg.firebase.apiKey) {
+        alert("Täytä ryhmän nimi ja Firebase-tiedot ennen kutsumista.");
+        return;
       }
+      showInviteDialog(cfg);
     });
   }
-
-  // "Jaa..." - avaa laitteen oman jakovalikon (Web Share API), jossa
-  // WhatsApp on yleensä yksi vaihtoehto muiden joukossa. Ei vaadi
-  // WhatsApp-tiliä/API-avainta eikä omaa palvelinta - käyttäjä valitsee itse
-  // kanavan, sovellus ei koskaan jaa mitään automaattisesti.
-  // Jos Web Share API ei ole tuettu (esim. työpöytäselain), pudotaan suoraan
-  // wa.me-syväliinkkiin, koska se oli alkuperäinen käytännön tarve.
-  container.querySelector("#cfg_share_app").addEventListener("click", () => {
-    const cfg = collectShareCfg();
-    if (!cfg.groupCode || !cfg.firebase.apiKey) {
-      alert("Täytä ryhmän nimi ja Firebase-tiedot ennen linkin jakamista.");
-      return;
-    }
-    const link = buildShareLink(cfg);
-    const label = cfg.groupName || cfg.groupCode;
-    const message = `Liity Hauku-ryhmään "${label}": ${link}`;
-
-    if (navigator.share) {
-      navigator.share({
-        title: "Hauku - liity ryhmään",
-        text: `Liity Hauku-ryhmään "${label}":`,
-        url: link,
-      }).catch(() => {
-        // Käyttäjä perui jakamisen tai selain esti sen hiljaa - ei tehdä mitään,
-        // linkki on silti "Kopioi liittymislinkki" -napin takana.
-      });
-    } else {
-      // Ei Web Share API -tukea: avataan wa.me suoraan valmiiksi täytetyllä
-      // viestillä, käyttäjä valitsee vastaanottajan WhatsAppissa itse.
-      window.open("https://wa.me/?text=" + encodeURIComponent(message), "_blank");
-    }
-  });
 
 // Varoitusdialogi ennen "Luo uusi ryhmä" -toimintoa, jos laitteella on jo
 // aktiivinen ryhmä joka olisi jäämässä taakse. Sama riski kuin
@@ -2911,7 +2943,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v73";
+const APP_VERSION = "v74";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
