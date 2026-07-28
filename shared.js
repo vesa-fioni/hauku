@@ -202,11 +202,13 @@ function renderConfigForm(existing, urlCfg, opts) {
         Käytä lisäsuojaa (toinen kanava, valinnainen)
       </label>
       <p class="hint">
-        Lisäsuoja tarkoittaa erillistä toisen kanavan koodia, joka pitää
+        Lisäsuoja tarkoittaa erillistä toisen kanavan linkkiä, joka pitää
         lähettää eri viestillä kuin liittymislinkki - esimerkiksi
-        liittymislinkki WhatsAppissa ja toisen kanavan koodi
-        tekstiviestillä. Tämä suojaa ryhmääsi siltä, että liittymislinkki
-        päätyisi vahingossa väärille silmille. Ei pakollinen.
+        liittymislinkki WhatsAppissa ja toisen kanavan linkki
+        tekstiviestillä. Vastaanottaja pääsee ryhmään avaamalla kummankin
+        linkin - hänen ei tarvitse kirjoittaa mitään käsin. Tämä suojaa
+        ryhmääsi siltä, että liittymislinkki päätyisi vahingossa väärille
+        silmille. Ei pakollinen.
       </p>
     </div>
     ${isNewGroup
@@ -312,9 +314,9 @@ function renderConfigForm(existing, urlCfg, opts) {
         <p class="hint">Avaa puhelimen omat jakovaihtoehdot valmiiksi täytetyllä viestillä.</p>
         <p id="cfg_share_status" class="hint hint-ok"></p>
         ${pinValue ? `
-        <button id="cfg_share_second" class="btn btn-secondary">Kopioi toisen kanavan koodi</button>
+        <button id="cfg_share_second" class="btn btn-secondary">Kopioi toisen kanavan linkki</button>
         <p id="cfg_share_second_status" class="hint hint-ok"></p>
-        <p class="hint">Muista lähettää tämä eri viestillä kuin liittymislinkki.</p>
+        <p class="hint">Muista lähettää tämä eri viestillä kuin liittymislinkki. Vastaanottaja pääsee ryhmään avaamalla linkin - ei tarvitse kirjoittaa mitään.</p>
         ` : ""}
       </div>
 
@@ -353,11 +355,11 @@ function unrecoverableLinkWarningHtml(groupLabel) {
 // käyttäjä painaa "Jatka karttaan".
 //
 // Käytettävyysparannus (27.7.2026, B1): jos ryhmällä on lisäsuoja, kaksi
-// erillistä kopiointitointa (liittymislinkki + toisen kanavan koodi) ei
+// erillistä kopiointitointa (liittymislinkki + toisen kanavan linkki) ei
 // enää näy samalla ruudulla yhtä aikaa - ne on jaettu kahdeksi peräkkäiseksi
 // vaiheeksi ("Vaihe 1/2", "Vaihe 2/2"), ja kunkin vaiheen "Seuraava"/"Jatka
 // karttaan" -nappi pysyy pois käytöstä kunnes kyseisen vaiheen kopiointi on
-// tehty. Tämä tekee kanavaerottelun (linkki ja koodi ERI viestillä) lähes
+// tehty. Tämä tekee kanavaerottelun (kaksi linkkiä ERI viestillä) lähes
 // mahdottomaksi ohittaa vahingossa, ja yksi asia kerrallaan on kevyempi
 // hahmottaa kuin aiempi "kaikki yhdellä ruudulla" -malli. Jos ryhmällä ei
 // ole lisäsuojaa, vaiheita on vain yksi eikä vaihemerkintää näytetä -
@@ -422,14 +424,15 @@ function showSaveLinkNowDialog(cfg) {
       overlay.innerHTML = `
         <div class="onboard-card">
           ${stepLabelHtml(2)}
-          <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Lisäsuojan koodi</h2>
+          <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Lisäsuojan linkki</h2>
           <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
-            Lähetä tämä toisen kanavan koodi <u>eri viestillä</u> kuin
+            Lähetä tämä toisen kanavan linkki <u>eri viestillä</u> kuin
             liittymislinkki - esimerkiksi tekstiviestillä, jos liittymislinkki
-            meni WhatsAppissa. Jos molemmat kulkevat samaa reittiä, lisäsuoja
-            ei tee mitään.
+            meni WhatsAppissa. Vastaanottaja pääsee ryhmään avaamalla sen -
+            ei tarvitse kirjoittaa mitään. Jos molemmat kulkevat samaa
+            reittiä, lisäsuoja ei tee mitään.
           </p>
-          <button class="btn btn-primary" id="saveLinkCopySecondBtn">Kopioi toisen kanavan koodi</button>
+          <button class="btn btn-primary" id="saveLinkCopySecondBtn">Kopioi toisen kanavan linkki</button>
           <p id="saveLinkSecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
           <button class="btn btn-secondary" id="saveLinkContinueBtn" disabled>Jatka karttaan</button>
         </div>
@@ -440,7 +443,7 @@ function showSaveLinkNowDialog(cfg) {
         const onCopied = () => { continueBtn.disabled = false; };
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(secondLink).then(() => {
-            secondStatusEl.textContent = "Toisen kanavan koodi kopioitu!";
+            secondStatusEl.textContent = "Toisen kanavan linkki kopioitu!";
             onCopied();
           }).catch(() => { secondStatusEl.textContent = secondLink; onCopied(); });
         } else {
@@ -458,14 +461,14 @@ function showSaveLinkNowDialog(cfg) {
     // Ei taustaklikkaus-sulkemista tässä dialogissa tarkoituksella - toisin
     // kuin muissa overlayissa, tämän pitää vaatia eksplisiittinen nappi-
     // painallus kummassakin vaiheessa, ettei käyttäjä ohita sitä vahingossa
-    // juuri sillä hetkellä kun linkki/koodi on ainutkertaisesti näkyvissä.
+    // juuri sillä hetkellä kun linkki on ainutkertaisesti näkyvissä.
     renderStepOne();
   });
 }
 
 // Näytetään kun lisäsuoja (toinen kanava) otetaan käyttöön olemassa
 // olevalle ryhmälle asetuksista - ei ryhmän luonnin yhteydessä (siitä
-// vastaa showSaveLinkNowDialog). Koodi on juuri generoitu tässä
+// vastaa showSaveLinkNowDialog). Linkki on juuri generoitu tässä
 // tallennuksessa eikä sitä ole näytetty käyttäjälle missään vaiheessa
 // aiemmin, joten se pitää tarjota kopioitavaksi juuri nyt - muuten
 // käyttäjä joutuisi itse muistamaan avata asetukset uudelleen löytääkseen
@@ -481,11 +484,13 @@ function showSecondFactorEnabledDialog(cfg) {
         <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Lisäsuoja otettu käyttöön</h2>
         <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
           Ryhmälle <strong>"${escapeHtml(cfg.groupName)}"</strong> luotiin
-          juuri toisen kanavan koodi. Lähetä se ryhmän jäsenille
+          juuri toisen kanavan linkki. Lähetä se ryhmän jäsenille
           <u>eri viestillä</u> kuin liittymislinkki - esimerkiksi
           tekstiviestillä, jos liittymislinkki menee WhatsAppissa.
+          Vastaanottaja pääsee ryhmään avaamalla sen - ei tarvitse
+          kirjoittaa mitään.
         </p>
-        <button class="btn btn-primary" id="secondFactorEnabledCopyBtn">Kopioi toisen kanavan koodi</button>
+        <button class="btn btn-primary" id="secondFactorEnabledCopyBtn">Kopioi toisen kanavan linkki</button>
         <p id="secondFactorEnabledStatus" class="hint hint-ok" style="min-height:16px;"></p>
         <button class="btn btn-secondary" id="secondFactorEnabledContinueBtn" disabled>Jatka karttaan</button>
       </div>
@@ -498,7 +503,7 @@ function showSecondFactorEnabledDialog(cfg) {
       const onCopied = () => { continueBtn.disabled = false; };
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(secondLink).then(() => {
-          statusEl.textContent = "Toisen kanavan koodi kopioitu!";
+          statusEl.textContent = "Toisen kanavan linkki kopioitu!";
           onCopied();
         }).catch(() => { statusEl.textContent = secondLink; onCopied(); });
       } else {
@@ -518,14 +523,14 @@ function showSecondFactorEnabledDialog(cfg) {
 // Käytettävyys-/turvallisuuskorjaus (27.7.2026, A1): kirjoittaa ryhmän
 // "kansilehden" OIKEASTI Firestoreen (ja varmistaa että Firebase-yhteys ja
 // anonyymi kirjautuminen toimivat) ENNEN kuin käyttäjälle luvataan linkin/
-// koodin toimivan. Aiemmin "Tallenna ryhmäsi linkki nyt" -dialogi
+// linkin toimivan. Aiemmin "Tallenna ryhmäsi linkki nyt" -dialogi
 // näytettiin heti Tallenna-napin painalluksen jälkeen, vaikka ryhmä oli
 // sillä hetkellä olemassa VAIN tämän laitteen localStoragessa - ei
 // Firestoressa. Tämä jätti kapean mutta todellisen ikkunan: jos joku ehtisi
 // avata liittymislinkin ennen tätä kutsua eikä requiresSecondFactor-lippua
 // olisi vielä kirjoitettu, liittyjä ohittaisi lisäsuojan täysin (ks.
 // HaukuData.readGroupDoc - puuttuva dokumentti tulkitaan false:ksi).
-// Kutsutaan aina ennen kuin mitään linkkiä/koodia tarjotaan kopioitavaksi
+// Kutsutaan aina ennen kuin mitään linkkiä tarjotaan kopioitavaksi
 // uudelle tai juuri lisäsuojatulle ryhmälle - ks. showSaveLinkNowDialog ja
 // showSecondFactorEnabledDialog. Heittää virheen jos yhteys/kirjautuminen
 // epäonnistuu, jotta kutsuja voi näyttää virheen sen sijaan että jatkaisi
@@ -570,9 +575,9 @@ function attachConfigFormHandlers(container, onSave) {
     const useSecondFactor = useSecondFactorEl ? useSecondFactorEl.checked : false;
     const existingPin = container.querySelector("#cfg_pin").value.trim();
     // Käytettävyysparannus (27.7.2026): jos lisäsuoja otetaan käyttöön juuri
-    // NYT (ei ollut käytössä ennen tätä tallennusta), koodi pitää näyttää
+    // NYT (ei ollut käytössä ennen tätä tallennusta), linkki pitää näyttää
     // käyttäjälle kopioitavaksi VÄLITTÖMÄSTI - ei riitä että "Kopioi toisen
-    // kanavan koodi" -nappi ilmestyy asetuksiin vasta seuraavalla avauksella
+    // kanavan linkki" -nappi ilmestyy asetuksiin vasta seuraavalla avauksella
     // (ks. showSecondFactorEnabledDialog alla).
     const pinWasNewlyEnabled = useSecondFactor && !existingPin;
     const pin = useSecondFactor ? (existingPin || generatePin()) : "";
@@ -602,7 +607,7 @@ function attachConfigFormHandlers(container, onSave) {
     const saveError = container.querySelector("#cfg_save_error");
 
     // Käytettävyysparannus (27.7.2026, A1): jos tästä tallennuksesta seuraa
-    // "tässä on linkkisi/koodisi" -dialogi, ryhmä pitää olla OIKEASTI
+    // "tässä on linkkisi" -dialogi, ryhmä pitää olla OIKEASTI
     // olemassa Firestoressa siinä vaiheessa kun dialogi näytetään - ei
     // riitä että se on vain tämän laitteen localStoragessa. Aiemmin dialogi
     // saattoi näyttää linkin toimivana ennen kuin mitään oli kirjoitettu
@@ -640,7 +645,7 @@ function attachConfigFormHandlers(container, onSave) {
     } else if (pinWasNewlyEnabled) {
       // Lisäsuoja otettiin käyttöön olemassa olevaan ryhmään (ei liity
       // ryhmän luontiin, joten showSaveLinkNowDialog ei laukea) - näytetään
-      // silti pakollinen väliaskel, koska koodi on juuri äsken generoitu ja
+      // silti pakollinen väliaskel, koska linkki on juuri äsken generoitu ja
       // sen jakaminen unohtuu helposti jos asetusikkuna sulkeutuu suoraan.
       // requiresSecondFactor-lippu on nyt jo kirjoitettu Firestoreen.
       showSecondFactorEnabledDialog(cfg).then(() => onSave(cfg));
@@ -684,7 +689,7 @@ function attachConfigFormHandlers(container, onSave) {
     }
   });
 
-  // Toisen kanavan koodin uudelleenkopiointi (esim. uuden jäsenen
+  // Toisen kanavan linkin uudelleenkopiointi (esim. uuden jäsenen
   // kutsumiseksi myöhemmin olemassa olevaan lisäsuojattuun ryhmään) -
   // näkyy vain jos tälle ryhmälle on jo aiemmin luotu pin (ks. groupField).
   const shareSecondBtn = container.querySelector("#cfg_share_second");
@@ -695,7 +700,7 @@ function attachConfigFormHandlers(container, onSave) {
       const statusEl = container.querySelector("#cfg_share_second_status");
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(secondLink).then(() => {
-          statusEl.textContent = "Toisen kanavan koodi kopioitu!";
+          statusEl.textContent = "Toisen kanavan linkki kopioitu!";
         }).catch(() => { statusEl.textContent = secondLink; });
       } else {
         statusEl.textContent = secondLink;
@@ -1415,8 +1420,10 @@ async function stopPackTracker() {
   currentAuth = null;
 }
 
-// Tunnistaa toisen kanavan koodin käyttäjän liittämästä tekstistä - joko
-// koko linkki (sisältää "pin=...") tai pelkkä raakakoodi sellaisenaan.
+// Tunnistaa toisen kanavan linkin käyttäjän liittämästä tekstistä - joko
+// koko linkki (sisältää "pin=...") tai pelkkä raakamerkkijono sellaisenaan
+// (jälkimmäinen varasuunnitelmana, ei koskaan varsinaisesti tarjottu
+// käyttöliittymästä - ks. keskustelu 27.7.2026).
 function extractPinFromInput(raw) {
   const trimmed = (raw || "").trim();
   const match = trimmed.match(/pin=([A-Za-z0-9_-]+)/);
@@ -1425,16 +1432,21 @@ function extractPinFromInput(raw) {
   return null;
 }
 
-// Näytetään kun ryhmä vaatii toisen kanavan koodin (ks. HaukuData.
-// readGroupDoc) mutta tällä laitteella ei vielä ole sitä. Ei
-// taustaklikkaus-/peruutusmahdollisuutta tarkoituksella - fail-closed
-// (ks. hauku-salaus-valmistusohje.md kohta 6.4): ilman koodia sovellus ei
-// voi purkaa/salata mitään oikein, joten sen näyttäminen "toimivana" olisi
-// pahempi kuin pysähtyminen tähän. Palauttaa Promisen joka resolvoituu
-// tunnistettuun pin-merkkijonoon.
+// Näytetään kun ryhmä vaatii toisen kanavan linkin (ks. HaukuData.
+// readGroupDoc) mutta tällä laitteella ei vielä ole sitä. HUOM: tavallisessa
+// tapauksessa toisen kanavan linkin NAPAUTTAMINEN riittää - boot() lukee
+// pin:in suoraan linkin fragmentista eikä tämä dialogi näy ollenkaan (ks.
+// merged.pin-rivi boot()-funktiossa). Tämä dialogi on siis nimenomaan
+// varasuunnitelma niille harvoille tapauksille joissa linkkiä ei napautettu
+// suoraan (esim. eri laite/selain, tai palataan asiaan myöhemmin) - siksi
+// teksti korostaa kopioi-liitä-tapaa, ei käsin kirjoittamista (ks.
+// keskustelu 27.7.2026). Ei taustaklikkaus-/peruutusmahdollisuutta
+// tarkoituksella - fail-closed (ks. hauku-salaus-valmistusohje.md kohta
+// 6.4): ilman linkkiä sovellus ei voi purkaa/salata mitään oikein, joten
+// sen näyttäminen "toimivana" olisi pahempi kuin pysähtyminen tähän.
 // Palauttaa Promisen joka resolvoituu tunnistettuun pin-merkkijonoon, tai
 // null:iin jos käyttäjä painaa "Peruuta" (ks. keskustelu 25.7.2026 - alkuun
-// tällä dialogilla ei ollut mitään ulospääsyä jos koodia ei ollut vielä
+// tällä dialogilla ei ollut mitään ulospääsyä jos linkkiä ei ollut vielä
 // saatavilla, jolloin käyttäjä jäi täysin jumiin). Peruuttaminen EI tarkoita
 // että avain lasketaan puutteellisena - startPackTracker pysäyttää
 // lähetyksen/kuuntelun kokonaan tässä tapauksessa, ks. alla.
@@ -1445,18 +1457,19 @@ function promptForSecondFactor(groupLabel) {
     overlay.style.display = "flex";
     overlay.innerHTML = `
       <div class="onboard-card">
-        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Ryhmä "${escapeHtml(groupLabel)}" vaatii toisen kanavan koodin</h2>
+        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Ryhmä "${escapeHtml(groupLabel)}" vaatii toisen kanavan linkin</h2>
         <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
           Tämän ryhmän perustaja lähetti sinulle liittymislinkin lisäksi
-          erillisen toisen kanavan koodin (esim. tekstiviestillä, jos
-          liittymislinkki tuli WhatsAppissa). Liitä se koodi tai sen
-          sisältävä linkki alle.
+          erillisen toisen kanavan linkin (esim. tekstiviestillä, jos
+          liittymislinkki tuli WhatsAppissa). Jos et napauttanut sitä
+          suoraan, kopioi se viestistä ja liitä alle - älä kirjoita sitä
+          käsin.
         </p>
-        <input id="secondFactorInput" placeholder="Liitä toisen kanavan koodi tai linkki tähän"
+        <input id="secondFactorInput" placeholder="Liitä toisen kanavan linkki tähän"
           style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:15px; margin-bottom:8px; box-sizing:border-box;">
         <p id="secondFactorError" style="font-size:12px; color:#dc2626; min-height:16px; margin:0 0 8px;"></p>
         <button class="btn btn-primary" id="secondFactorSubmitBtn">Vahvista</button>
-        <button class="btn btn-secondary" id="secondFactorCancelBtn">Ei ole toisen kanavan koodia vielä - peruuta</button>
+        <button class="btn btn-secondary" id="secondFactorCancelBtn">Ei ole toisen kanavan linkkiä vielä - peruuta</button>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -1466,7 +1479,7 @@ function promptForSecondFactor(groupLabel) {
     overlay.querySelector("#secondFactorSubmitBtn").addEventListener("click", () => {
       const pin = extractPinFromInput(input.value);
       if (!pin) {
-        errorEl.textContent = "Tunnistettavaa toisen kanavan koodia ei löytynyt - tarkista että liitit oikean tekstin.";
+        errorEl.textContent = "Tunnistettavaa toisen kanavan linkkiä ei löytynyt - tarkista että liitit oikean tekstin.";
         return;
       }
       if (overlay.parentNode) document.body.removeChild(overlay);
@@ -1504,12 +1517,12 @@ function beginNormalOperation(db, auth, cfg) {
 
 // Asettaa tilariville klikattavan tekstin joka avaa toisen kanavan kyselyn
 // uudelleen - käytetään kun käyttäjä on aiemmin painanut "Peruuta" eikä
-// koodia ollut vielä saatavilla (ks. keskustelu 25.7.2026 - dialogi oli
+// linkkiä ollut vielä saatavilla (ks. keskustelu 25.7.2026 - dialogi oli
 // aiemmin umpikuja, ei tarjonnut mitään tapaa yrittää myöhemmin uudelleen).
 function setRetryableSecondFactorStatus(db, auth, cfg) {
   const el = document.getElementById("statusText");
   if (!el) return;
-  el.textContent = "Tarvitset toisen kanavan koodin - kosketa tästä kun se on saatavilla";
+  el.textContent = "Tarvitset toisen kanavan linkin - kosketa tästä kun se on saatavilla";
   el.style.textDecoration = "underline";
   el.style.cursor = "pointer";
   el.onclick = async () => {
@@ -1556,19 +1569,19 @@ async function startPackTracker(cfg) {
     // Kirjoitetaan kansilehti VAIN jos tällä laitteella on pin (ks.
     // HaukuData.writeGroupDoc - ei koskaan muuten, race condition -riski).
     // Luetaan sitten aina, jotta havaitaan vaatiiko TÄMÄ ryhmä toisen
-    // koodin vaikka tämä laite ei vielä tiedä sitä (ks. keskustelu
+    // linkin vaikka tämä laite ei vielä tiedä sitä (ks. keskustelu
     // 25.7.2026 - "ei kysynyt mitään" -bugi, jossa laite jatkoi hiljaa
     // väärällä, vain encKey:stä lasketulla avaimella).
     await HaukuData.writeGroupDoc(db, cfg);
     const { requiresSecondFactor } = await HaukuData.readGroupDoc(db, cfg);
 
     if (requiresSecondFactor && !cfg.pin) {
-      setStatus("Tämä ryhmä vaatii toisen kanavan koodin.");
+      setStatus("Tämä ryhmä vaatii toisen kanavan linkin.");
       const pin = await promptForSecondFactor(cfg.groupName || cfg.groupCode);
       if (!pin) {
-        // Peruutettu - ei koodia vielä saatavilla. EI aloiteta kuuntelua/
+        // Peruutettu - ei linkkiä vielä saatavilla. EI aloiteta kuuntelua/
         // lähetystä väärällä/puuttuvalla avaimella (fail-closed) - näytetään
-        // sen sijaan klikattava tila jolla voi yrittää uudelleen kun koodi
+        // sen sijaan klikattava tila jolla voi yrittää uudelleen kun linkki
         // on saatu. Ei umpikuja, mutta ei myöskään toimi näennäisesti.
         setRetryableSecondFactorStatus(db, auth, cfg);
         return;
@@ -1626,12 +1639,12 @@ function generateEncKey() {
   return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
-// Generoi valinnaisen toisen kanavan koodin (ks. hauku-salaus-valmistusohje.md
+// Generoi valinnaisen toisen kanavan tunnisteen (ks. hauku-salaus-valmistusohje.md
 // kohta 5) - 8 tavua (64 bittiä) riittää tähän uhkamalliin, koska se
 // yhdistetään aina encKey:hen (256 bittiä) SHA-256:lla, ei käytetä
 // koskaan sellaisenaan avaimena. Lyhyempi kuin encKey siksi että se on
 // tarkoitettu välitettäväksi kokonaan eri kanavaa pitkin (esim. tekstiviesti)
-// - lyhyempi linkki/koodi on käytännössä helpompi käsitellä sellaisenaan.
+// - lyhyempi linkki on käytännössä helpompi käsitellä sellaisenaan.
 function generatePin() {
   return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(8)));
 }
@@ -1645,7 +1658,7 @@ function getFragmentEncKey() {
   return match ? match[1] : null;
 }
 
-// Sama periaate valinnaiselle toisen kanavan koodille - eri linkki,
+// Sama periaate valinnaiselle toisen kanavan tunnisteelle - eri linkki,
 // eri fragmenttiavain ("pin="), ei koskaan sama linkki kuin "key=".
 function getFragmentPin() {
   const match = window.location.hash.match(/pin=([A-Za-z0-9_-]+)/);
@@ -2898,7 +2911,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v72";
+const APP_VERSION = "v73";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -3004,7 +3017,7 @@ function resolveGroupConflict(existing, urlCfg) {
       // Ryhmänvaihdossa vanha pin ei ole enää relevantti (se kuului
       // vanhalle ryhmälle) - otetaan vain jos linkki toi uuden, muuten
       // tyhjä (uusi ryhmä ei automaattisesti peri vanhan toisen kanavan
-      // koodia).
+      // linkkiä).
       pin: urlCfg.pin || undefined,
       firebase: urlCfg.firebase || existing.firebase,
       role: urlCfg.role || existing.role
