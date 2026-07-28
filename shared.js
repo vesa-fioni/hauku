@@ -305,6 +305,7 @@ function renderConfigForm(existing, urlCfg, opts) {
         ${firebaseFields}
 
         <button id="cfg_save" class="btn btn-primary">Tallenna ja aloita</button>
+        <p id="cfg_save_error" class="hint" style="color:#dc2626;"></p>
         <button id="cfg_share" class="btn btn-secondary">Kopioi liittymislinkki</button>
         <p class="hint">Liitä linkki itse haluamaasi viestiin (esim. sähköposti tai ryhmäkeskustelu).</p>
         <button id="cfg_share_app" class="btn btn-secondary">Jaa... (esim. WhatsApp)</button>
@@ -350,71 +351,115 @@ function unrecoverableLinkWarningHtml(groupLabel) {
 // linkin näkyviin ja tarjoaa kopioinnin juuri sillä ainoalla hetkellä kun
 // se on vielä mahdollista. Palauttaa Promisen joka resolvoituu kun
 // käyttäjä painaa "Jatka karttaan".
+//
+// Käytettävyysparannus (27.7.2026, B1): jos ryhmällä on lisäsuoja, kaksi
+// erillistä kopiointitointa (liittymislinkki + toisen kanavan koodi) ei
+// enää näy samalla ruudulla yhtä aikaa - ne on jaettu kahdeksi peräkkäiseksi
+// vaiheeksi ("Vaihe 1/2", "Vaihe 2/2"), ja kunkin vaiheen "Seuraava"/"Jatka
+// karttaan" -nappi pysyy pois käytöstä kunnes kyseisen vaiheen kopiointi on
+// tehty. Tämä tekee kanavaerottelun (linkki ja koodi ERI viestillä) lähes
+// mahdottomaksi ohittaa vahingossa, ja yksi asia kerrallaan on kevyempi
+// hahmottaa kuin aiempi "kaikki yhdellä ruudulla" -malli. Jos ryhmällä ei
+// ole lisäsuojaa, vaiheita on vain yksi eikä vaihemerkintää näytetä -
+// käytös vastaa tällöin täysin aiempaa yksivaiheista dialogia.
 function showSaveLinkNowDialog(cfg) {
   return new Promise((resolve) => {
     const link = buildShareLink(cfg);
     const hasSecondFactor = !!cfg.pin;
     const secondLink = hasSecondFactor ? buildSecondFactorLink(cfg) : null;
+    const totalSteps = hasSecondFactor ? 2 : 1;
+
     const overlay = document.createElement("div");
     overlay.className = "overlay";
     overlay.style.display = "flex";
-    overlay.innerHTML = `
-      <div class="onboard-card">
-        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Tallenna ryhmäsi linkki nyt</h2>
-        <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 4px;">
-          Tämä on ainoa kerta kun tämä linkki näytetään automaattisesti.
-        </p>
-        ${unrecoverableLinkWarningHtml(cfg.groupName)}
-        <button class="btn btn-primary" id="saveLinkCopyBtn" style="margin-top:14px;">Kopioi liittymislinkki leikepöydälle</button>
-        <p id="saveLinkStatus" class="hint hint-ok" style="min-height:16px;"></p>
-        ${hasSecondFactor ? `
-        <p style="font-size:12px; line-height:1.5; color:#9a3412; background:#fff7ed; border-radius:8px; padding:8px 10px; margin:14px 0 4px;">
-          <strong>Lisäsuoja on käytössä tälle ryhmälle.</strong> Lähetä alla
-          oleva toisen kanavan koodi <u>eri viestillä</u> kuin
-          liittymislinkki - esimerkiksi tekstiviestillä, jos liittymislinkki
-          menee WhatsAppissa. Jos molemmat kulkevat samaa reittiä, lisäsuoja
-          ei tee mitään.
-        </p>
-        <button class="btn btn-secondary" id="saveLinkCopySecondBtn">Kopioi toisen kanavan koodi</button>
-        <p id="saveLinkSecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
-        ` : ""}
-        <button class="btn btn-secondary" id="saveLinkContinueBtn">Jatka karttaan</button>
-      </div>
-    `;
     document.body.appendChild(overlay);
 
-    const statusEl = overlay.querySelector("#saveLinkStatus");
-    overlay.querySelector("#saveLinkCopyBtn").addEventListener("click", () => {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(link).then(() => {
-          statusEl.textContent = "Linkki kopioitu leikepöydälle!";
-        }).catch(() => { statusEl.textContent = link; });
-      } else {
-        statusEl.textContent = link;
-      }
-    });
+    function stepLabelHtml(step) {
+      if (totalSteps <= 1) return "";
+      return `<p style="font-size:12px; font-weight:700; color:var(--orange-dark); text-transform:uppercase; letter-spacing:0.04em; margin:0 0 6px;">Vaihe ${step}/${totalSteps}</p>`;
+    }
 
-    if (hasSecondFactor) {
-      const secondStatusEl = overlay.querySelector("#saveLinkSecondStatus");
-      overlay.querySelector("#saveLinkCopySecondBtn").addEventListener("click", () => {
+    function renderStepOne() {
+      overlay.innerHTML = `
+        <div class="onboard-card">
+          ${stepLabelHtml(1)}
+          <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Tallenna ryhmäsi linkki nyt</h2>
+          <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 4px;">
+            Tämä on ainoa kerta kun tämä linkki näytetään automaattisesti.
+          </p>
+          ${unrecoverableLinkWarningHtml(cfg.groupName)}
+          <button class="btn btn-primary" id="saveLinkCopyBtn" style="margin-top:14px;">Kopioi liittymislinkki leikepöydälle</button>
+          <p id="saveLinkStatus" class="hint hint-ok" style="min-height:16px;"></p>
+          <button class="btn btn-secondary" id="saveLinkNextBtn" disabled>${totalSteps > 1 ? "Seuraava" : "Jatka karttaan"}</button>
+        </div>
+      `;
+      const statusEl = overlay.querySelector("#saveLinkStatus");
+      const nextBtn = overlay.querySelector("#saveLinkNextBtn");
+      overlay.querySelector("#saveLinkCopyBtn").addEventListener("click", () => {
+        const onCopied = () => { nextBtn.disabled = false; };
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(secondLink).then(() => {
-            secondStatusEl.textContent = "Toisen kanavan koodi kopioitu!";
-          }).catch(() => { secondStatusEl.textContent = secondLink; });
+          navigator.clipboard.writeText(link).then(() => {
+            statusEl.textContent = "Linkki kopioitu leikepöydälle!";
+            onCopied();
+          }).catch(() => { statusEl.textContent = link; onCopied(); });
         } else {
-          secondStatusEl.textContent = secondLink;
+          statusEl.textContent = link;
+          onCopied();
+        }
+      });
+      nextBtn.addEventListener("click", () => {
+        if (nextBtn.disabled) return;
+        if (totalSteps > 1) {
+          renderStepTwo();
+        } else if (overlay.parentNode) {
+          document.body.removeChild(overlay);
+          resolve();
         }
       });
     }
 
+    function renderStepTwo() {
+      overlay.innerHTML = `
+        <div class="onboard-card">
+          ${stepLabelHtml(2)}
+          <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Lisäsuojan koodi</h2>
+          <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
+            Lähetä tämä toisen kanavan koodi <u>eri viestillä</u> kuin
+            liittymislinkki - esimerkiksi tekstiviestillä, jos liittymislinkki
+            meni WhatsAppissa. Jos molemmat kulkevat samaa reittiä, lisäsuoja
+            ei tee mitään.
+          </p>
+          <button class="btn btn-primary" id="saveLinkCopySecondBtn">Kopioi toisen kanavan koodi</button>
+          <p id="saveLinkSecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
+          <button class="btn btn-secondary" id="saveLinkContinueBtn" disabled>Jatka karttaan</button>
+        </div>
+      `;
+      const secondStatusEl = overlay.querySelector("#saveLinkSecondStatus");
+      const continueBtn = overlay.querySelector("#saveLinkContinueBtn");
+      overlay.querySelector("#saveLinkCopySecondBtn").addEventListener("click", () => {
+        const onCopied = () => { continueBtn.disabled = false; };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(secondLink).then(() => {
+            secondStatusEl.textContent = "Toisen kanavan koodi kopioitu!";
+            onCopied();
+          }).catch(() => { secondStatusEl.textContent = secondLink; onCopied(); });
+        } else {
+          secondStatusEl.textContent = secondLink;
+          onCopied();
+        }
+      });
+      continueBtn.addEventListener("click", () => {
+        if (continueBtn.disabled) return;
+        if (overlay.parentNode) document.body.removeChild(overlay);
+        resolve();
+      });
+    }
+
     // Ei taustaklikkaus-sulkemista tässä dialogissa tarkoituksella - toisin
-    // kuin muissa overlayissa, tämän pitää vaatia eksplisiittinen "Jatka"
-    // -painallus, ettei käyttäjä ohita sitä vahingossa juuri sillä hetkellä
-    // kun linkki on ainutkertaisesti näkyvissä.
-    overlay.querySelector("#saveLinkContinueBtn").addEventListener("click", () => {
-      if (overlay.parentNode) document.body.removeChild(overlay);
-      resolve();
-    });
+    // kuin muissa overlayissa, tämän pitää vaatia eksplisiittinen nappi-
+    // painallus kummassakin vaiheessa, ettei käyttäjä ohita sitä vahingossa
+    // juuri sillä hetkellä kun linkki/koodi on ainutkertaisesti näkyvissä.
+    renderStepOne();
   });
 }
 
@@ -442,27 +487,60 @@ function showSecondFactorEnabledDialog(cfg) {
         </p>
         <button class="btn btn-primary" id="secondFactorEnabledCopyBtn">Kopioi toisen kanavan koodi</button>
         <p id="secondFactorEnabledStatus" class="hint hint-ok" style="min-height:16px;"></p>
-        <button class="btn btn-secondary" id="secondFactorEnabledContinueBtn">Jatka karttaan</button>
+        <button class="btn btn-secondary" id="secondFactorEnabledContinueBtn" disabled>Jatka karttaan</button>
       </div>
     `;
     document.body.appendChild(overlay);
 
     const statusEl = overlay.querySelector("#secondFactorEnabledStatus");
+    const continueBtn = overlay.querySelector("#secondFactorEnabledContinueBtn");
     overlay.querySelector("#secondFactorEnabledCopyBtn").addEventListener("click", () => {
+      const onCopied = () => { continueBtn.disabled = false; };
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(secondLink).then(() => {
           statusEl.textContent = "Toisen kanavan koodi kopioitu!";
-        }).catch(() => { statusEl.textContent = secondLink; });
+          onCopied();
+        }).catch(() => { statusEl.textContent = secondLink; onCopied(); });
       } else {
         statusEl.textContent = secondLink;
+        onCopied();
       }
     });
 
     overlay.querySelector("#secondFactorEnabledContinueBtn").addEventListener("click", () => {
+      if (continueBtn.disabled) return;
       if (overlay.parentNode) document.body.removeChild(overlay);
       resolve();
     });
   });
+}
+
+// Käytettävyys-/turvallisuuskorjaus (27.7.2026, A1): kirjoittaa ryhmän
+// "kansilehden" OIKEASTI Firestoreen (ja varmistaa että Firebase-yhteys ja
+// anonyymi kirjautuminen toimivat) ENNEN kuin käyttäjälle luvataan linkin/
+// koodin toimivan. Aiemmin "Tallenna ryhmäsi linkki nyt" -dialogi
+// näytettiin heti Tallenna-napin painalluksen jälkeen, vaikka ryhmä oli
+// sillä hetkellä olemassa VAIN tämän laitteen localStoragessa - ei
+// Firestoressa. Tämä jätti kapean mutta todellisen ikkunan: jos joku ehtisi
+// avata liittymislinkin ennen tätä kutsua eikä requiresSecondFactor-lippua
+// olisi vielä kirjoitettu, liittyjä ohittaisi lisäsuojan täysin (ks.
+// HaukuData.readGroupDoc - puuttuva dokumentti tulkitaan false:ksi).
+// Kutsutaan aina ennen kuin mitään linkkiä/koodia tarjotaan kopioitavaksi
+// uudelle tai juuri lisäsuojatulle ryhmälle - ks. showSaveLinkNowDialog ja
+// showSecondFactorEnabledDialog. Heittää virheen jos yhteys/kirjautuminen
+// epäonnistuu, jotta kutsuja voi näyttää virheen sen sijaan että jatkaisi
+// näyttämään dialogin joka lupaisi jotain mitä ei oikeasti ole olemassa.
+//
+// HUOM Firebase-instanssin elinkaaresta: initFirebase/signIn tapahtuu tässä
+// tilapäisesti tätä yhtä kirjoitusta varten. startPackTracker (joka
+// kutsutaan hetkeä myöhemmin samassa tallennusketjussa, dialogin sulkeuduttua)
+// kutsuu stopPackTrackeria ensimmäisenä toimenaan, joka tuhoaa kaikki
+// firebase.apps-instanssit ennen omaa initFirebase-kutsuaan - tämä ei siis
+// jätä ylimääräistä/ristiriitaista Firebase-yhteyttä roikkumaan.
+async function establishGroupOnServer(cfg) {
+  const { auth, db } = HaukuData.initFirebase(cfg);
+  await HaukuData.signInAnonymously(auth);
+  await HaukuData.writeGroupDoc(db, cfg);
 }
 
 function attachConfigFormHandlers(container, onSave) {
@@ -476,7 +554,7 @@ function attachConfigFormHandlers(container, onSave) {
   // kopioimassa linkkiä erikseen, uuteen ryhmään ei muuten pääse takaisin).
   let groupWasFreshlyCreated = !container.querySelector("#cfg_new_group_link");
 
-  container.querySelector("#cfg_save").addEventListener("click", () => {
+  container.querySelector("#cfg_save").addEventListener("click", async () => {
     const role = container.querySelector('input[name="cfg_role"]:checked')?.value || "hunter";
     const mapStyle = container.querySelector('input[name="cfg_mapStyle"]:checked')?.value || "osm";
     const autoStopRaw = parseInt(container.querySelector("#cfg_autoStop").value, 10);
@@ -519,18 +597,52 @@ function attachConfigFormHandlers(container, onSave) {
       alert("Ryhmän nimi, apiKey ja projectId ovat pakollisia.");
       return;
     }
+
+    const saveBtn = container.querySelector("#cfg_save");
+    const saveError = container.querySelector("#cfg_save_error");
+
+    // Käytettävyysparannus (27.7.2026, A1): jos tästä tallennuksesta seuraa
+    // "tässä on linkkisi/koodisi" -dialogi, ryhmä pitää olla OIKEASTI
+    // olemassa Firestoressa siinä vaiheessa kun dialogi näytetään - ei
+    // riitä että se on vain tämän laitteen localStoragessa. Aiemmin dialogi
+    // saattoi näyttää linkin toimivana ennen kuin mitään oli kirjoitettu
+    // palvelimelle, mikä jätti kapean ikkunan jossa lisäsuoja ei olisi
+    // vielä ollut voimassa jos joku ehtisi liittyä juuri silloin (ks.
+    // HaukuData.readGroupDoc - puuttuva dokumentti tulkitaan false:ksi).
+    const needsServerEstablish = groupWasFreshlyCreated || pinWasNewlyEnabled;
+
+    if (needsServerEstablish) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Luodaan ryhmää...";
+      if (saveError) saveError.textContent = "";
+      try {
+        await establishGroupOnServer(cfg);
+      } catch (err) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Tallenna ja aloita";
+        if (saveError) {
+          saveError.textContent = "Ryhmän luonti epäonnistui - tarkista verkkoyhteys ja Firebase-tiedot, ja yritä uudelleen.";
+        }
+        return;
+      }
+      saveBtn.textContent = "Tallenna ja aloita";
+      saveBtn.disabled = false;
+    }
+
     saveConfig(cfg);
     if (groupWasFreshlyCreated) {
       // Pakollinen väliaskel ennen karttaan siirtymistä - ei riitä että
       // linkki on kopioitavissa asetuksista MYÖHEMMIN, koska käyttäjä voi
       // sulkea koko selaimen (tai yksityisen ikkunan, joka pyyhkii kaiken
-      // sulkemisen yhteydessä) koskaan palaamatta asetuksiin.
+      // sulkemisen yhteydessä) koskaan palaamatta asetuksiin. Ryhmä on nyt
+      // jo oikeasti olemassa Firestoressa (ks. establishGroupOnServer yllä).
       showSaveLinkNowDialog(cfg).then(() => onSave(cfg));
     } else if (pinWasNewlyEnabled) {
       // Lisäsuoja otettiin käyttöön olemassa olevaan ryhmään (ei liity
       // ryhmän luontiin, joten showSaveLinkNowDialog ei laukea) - näytetään
       // silti pakollinen väliaskel, koska koodi on juuri äsken generoitu ja
       // sen jakaminen unohtuu helposti jos asetusikkuna sulkeutuu suoraan.
+      // requiresSecondFactor-lippu on nyt jo kirjoitettu Firestoreen.
       showSecondFactorEnabledDialog(cfg).then(() => onSave(cfg));
     } else {
       onSave(cfg);
@@ -2786,7 +2898,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v71";
+const APP_VERSION = "v72";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
