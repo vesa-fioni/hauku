@@ -57,7 +57,7 @@ function getUrlConfig() {
 
   // Huom: mmlApiKey luetaan URL:sta jos sellainen sattuu olemaan (esim.
   // käyttäjä rakentaa linkin itse käsin), mutta sovelluksen oma "Kopioi
-  // jakolinkki" / "Jaa..." ei enää laita tätä linkkiin - ks. buildShareLink.
+  // liittymislinkki" / "Jaa..." ei enää laita tätä linkkiin - ks. buildShareLink.
   const mmlApiKey = p.get("mmlApiKey");
   if (mmlApiKey) result.mmlApiKey = mmlApiKey;
 
@@ -122,7 +122,7 @@ function buildShareLink(cfg) {
 
 // Valinnaisen toisen kanavan linkki (ks. hauku-salaus-valmistusohje.md
 // kohta 5) - TIETOISESTI ERILLINEN funktio buildShareLinkistä, koska tämä
-// linkki pitää lähettää eri kanavaa pitkin kuin ensisijainen jakolinkki.
+// linkki pitää lähettää eri kanavaa pitkin kuin ensisijainen liittymislinkki.
 // Sisältää vain groupCoden (jotta linkki on itsenäisesti tunnistettavissa)
 // ja pin-fragmentin - EI apiKey/authDomain/projectId/appId/encKey, jottei
 // kumpikaan linkki yksinään sisällä molempia salaisuuksia.
@@ -135,12 +135,13 @@ function buildSecondFactorLink(cfg) {
 
 // ---- Onboarding-/asetuslomake ----
 
-function renderConfigForm(existing, urlCfg) {
+function renderConfigForm(existing, urlCfg, opts) {
   urlCfg = urlCfg || {};
+  opts = opts || {};
 
   const firebaseFromUrl = !!urlCfg.firebase;
 
-  // Liittymiskoodi on aina piilossa käyttäjältä - se kulkee vain jakolinkin mukana.
+  // Liittymiskoodi on aina piilossa käyttäjältä - se kulkee vain liittymislinkin mukana.
   // Jos mikään ei vielä anna koodia (täysin uusi käyttäjä), generoidaan uusi satunnaiskoodi tässä,
   // ja se pysyy samana koko lomakkeen elinkaaren ajan (talteen otettu piilokenttään).
   const groupCodeValue = existing?.groupCode || urlCfg.groupCode || generateGroupCode();
@@ -156,11 +157,38 @@ function renderConfigForm(existing, urlCfg) {
   const groupNameValue = existing?.groupName || urlCfg.groupName || "";
   const isNewGroup = !existing?.groupCode && !urlCfg.groupCode;
 
+  // Käytettävyysparannus (ks. keskustelu 27.7.2026): erotetaan kolme
+  // tilannetta toisistaan, jotta lomake voi kertoa käyttäjälle SUORAAN mitä
+  // on tapahtumassa sen sijaan että käyttäjä joutuisi päättelemään sen
+  // pienestä hint-tekstistä. isSettings tulee kutsujalta (showOnboarding vs.
+  // showSettingsOverlay) - urlCfg/existing ei riitä erottamaan asetusten
+  // avaamista omaan, jo toimivaan ryhmään liittymisestä linkin kautta.
+  const isSettings = !!opts.isSettings;
+  const isJoiningViaLink = !isSettings && !!urlCfg.groupCode;
+
   const fbValue = (key) => existing?.firebase?.[key] || urlCfg.firebase?.[key] || "";
   const roleValue = existing?.role || urlCfg.role || "hunter";
   const mapStyleValue = existing?.mapStyle || urlCfg.mapStyle || "osm";
   const mmlApiKeyValue = existing?.mmlApiKey || urlCfg.mmlApiKey || "";
   const autoStopValue = existing?.autoStopMinutes ?? urlCfg.autoStopMinutes ?? 15;
+
+  // Konteksti-banneri lomakkeen ylälaidassa: kertoo suoraan otsikkotasolla
+  // ollaanko liittymässä jonkun toisen ryhmään, luomassa täysin uutta
+  // ryhmää, vai muokkaamassa omia asetuksia - ei jätetä käyttäjän
+  // päättelyn varaan (ks. keskustelu 27.7.2026).
+  let contextBanner = "";
+  if (isJoiningViaLink) {
+    const joinLabel = groupNameValue || groupCodeValue;
+    contextBanner = `
+      <p style="background:rgba(27,67,50,0.08); border-radius:10px; padding:10px 12px; margin:0 0 16px; font-size:14px; font-weight:700; color:var(--forest);">
+        Liityt ryhmään "${escapeHtml(joinLabel)}"
+      </p>`;
+  } else if (isNewGroup) {
+    contextBanner = `
+      <p style="background:rgba(249,115,22,0.08); border-radius:10px; padding:10px 12px; margin:0 0 16px; font-size:14px; font-weight:700; color:var(--orange-dark);">
+        Luot uuden ryhmän
+      </p>`;
+  }
 
   const groupField = `
     <label>Ryhmän nimi</label>
@@ -174,13 +202,19 @@ function renderConfigForm(existing, urlCfg) {
         Käytä lisäsuojaa (toinen kanava, valinnainen)
       </label>
       <p class="hint">
-        Lisää erillisen koodin joka pitää jakaa eri kanavaa pitkin kuin
-        liittymislinkki (esim. tekstiviestillä WhatsApp-linkin sijaan).
-        Suojaa jos linkki leviäisi vahingossa. Ei pakollinen.
+        Lisäsuoja tarkoittaa erillistä toisen kanavan koodia, joka pitää
+        lähettää eri viestillä kuin liittymislinkki - esimerkiksi
+        liittymislinkki WhatsAppissa ja toisen kanavan koodi
+        tekstiviestillä. Tämä suojaa ryhmääsi siltä, että liittymislinkki
+        päätyisi vahingossa väärille silmille. Ei pakollinen.
       </p>
     </div>
     ${isNewGroup
-      ? `<p class="hint">Uusi ryhmä luodaan tallennettaessa - jaa linkki tallennuksen jälkeen kutsuaksesi muut.</p>`
+      ? `<p class="hint">Uusi ryhmä luodaan tallennettaessa - jaa liittymislinkki tallennuksen jälkeen kutsuaksesi muut.</p>`
+      : isJoiningViaLink
+      ? `<p class="hint">
+           <a href="#" id="cfg_new_group_link">En halua liittyä tähän - luo minulle oma uusi ryhmä sen sijaan</a>
+         </p>`
       : `<p class="hint">
            <a href="#" id="cfg_new_group_link">Luo uusi ryhmä tämän sijaan</a>
          </p>`}
@@ -215,6 +249,7 @@ function renderConfigForm(existing, urlCfg) {
       <p class="onboard-tagline">Ryhmäpohjainen sijainninjako koirille ja ihmisille</p>
 
       <div class="form-block">
+        ${contextBanner}
         ${groupField}
 
         <label>Nimi</label>
@@ -270,13 +305,15 @@ function renderConfigForm(existing, urlCfg) {
         ${firebaseFields}
 
         <button id="cfg_save" class="btn btn-primary">Tallenna ja aloita</button>
-        <button id="cfg_share" class="btn btn-secondary">Kopioi jakolinkki</button>
+        <button id="cfg_share" class="btn btn-secondary">Kopioi liittymislinkki</button>
+        <p class="hint">Liitä linkki itse haluamaasi viestiin (esim. sähköposti tai ryhmäkeskustelu).</p>
         <button id="cfg_share_app" class="btn btn-secondary">Jaa... (esim. WhatsApp)</button>
+        <p class="hint">Avaa puhelimen omat jakovaihtoehdot valmiiksi täytetyllä viestillä.</p>
         <p id="cfg_share_status" class="hint hint-ok"></p>
         ${pinValue ? `
         <button id="cfg_share_second" class="btn btn-secondary">Kopioi toisen kanavan koodi</button>
         <p id="cfg_share_second_status" class="hint hint-ok"></p>
-        <p class="hint">Muista lähettää tämä eri kanavaa pitkin kuin jakolinkki.</p>
+        <p class="hint">Muista lähettää tämä eri viestillä kuin liittymislinkki.</p>
         ` : ""}
       </div>
 
@@ -289,8 +326,24 @@ function renderConfigForm(existing, urlCfg) {
   `;
 }
 
+// Käytettävyysparannus (27.7.2026): kolmessa erillisessä dialogissa
+// (showSaveLinkNowDialog, showNewGroupWarningDialog, showGroupConflictDialog)
+// varoitetaan samasta asiasta - liittymislinkin peruuttamattomasta
+// katoamisesta. Aiemmin kussakin oli hieman eri sanamuoto, mikä pakotti
+// käyttäjän lukemaan varoituksen kokonaan uudelleen joka kerta. Yksi
+// yhteinen, sana sanasta identtinen teksti auttaa tunnistamaan sen nopeasti
+// "tämä on se tärkeä varoitus" -kuviona.
+function unrecoverableLinkWarningHtml(groupLabel) {
+  return `
+    <p style="font-size:12px; line-height:1.5; color:#9a3412; background:#fff7ed; border-radius:8px; padding:8px 10px; margin:12px 0 4px;">
+      <strong>Muista ensin:</strong> jos ryhmän "${escapeHtml(groupLabel)}"
+      liittymislinkkiä ei ole tallennettu tai jaettu mihinkään, ryhmään ei
+      pääse enää koskaan takaisin - linkkiä ei voi luoda uudelleen.
+    </p>`;
+}
+
 // Pakollinen väliaskel heti uuden ryhmän tallennuksen jälkeen, ennen kuin
-// karttaan siirrytään. Ks. keskustelu 25.7.2026: "Kopioi jakolinkki"
+// karttaan siirrytään. Ks. keskustelu 25.7.2026: "Kopioi liittymislinkki"
 // asetuksista ei riitä turvaventtiiliksi, koska käyttäjä voi sulkea koko
 // selaimen (tai varsinkin yksityisen ikkunan, joka pyyhkii kaiken
 // sulkemisen yhteydessä) koskaan käymättä siellä. Tämä dialogi pakottaa
@@ -308,18 +361,16 @@ function showSaveLinkNowDialog(cfg) {
     overlay.innerHTML = `
       <div class="onboard-card">
         <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Tallenna ryhmäsi linkki nyt</h2>
-        <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
+        <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 4px;">
           Tämä on ainoa kerta kun tämä linkki näytetään automaattisesti.
-          Jos suljet selaimen kopioimatta sitä (varsinkin yksityisessä/
-          inkognitoikkunassa), ryhmääsi <strong>"${escapeHtml(cfg.groupName)}"</strong>
-          ei voi enää avata uudelleen millään tavalla.
         </p>
-        <button class="btn btn-primary" id="saveLinkCopyBtn">Kopioi liittymislinkki leikepöydälle</button>
+        ${unrecoverableLinkWarningHtml(cfg.groupName)}
+        <button class="btn btn-primary" id="saveLinkCopyBtn" style="margin-top:14px;">Kopioi liittymislinkki leikepöydälle</button>
         <p id="saveLinkStatus" class="hint hint-ok" style="min-height:16px;"></p>
         ${hasSecondFactor ? `
         <p style="font-size:12px; line-height:1.5; color:#9a3412; background:#fff7ed; border-radius:8px; padding:8px 10px; margin:14px 0 4px;">
           <strong>Lisäsuoja on käytössä tälle ryhmälle.</strong> Lähetä alla
-          oleva toisen kanavan koodi <u>eri kanavaa pitkin</u> kuin
+          oleva toisen kanavan koodi <u>eri viestillä</u> kuin
           liittymislinkki - esimerkiksi tekstiviestillä, jos liittymislinkki
           menee WhatsAppissa. Jos molemmat kulkevat samaa reittiä, lisäsuoja
           ei tee mitään.
@@ -367,6 +418,53 @@ function showSaveLinkNowDialog(cfg) {
   });
 }
 
+// Näytetään kun lisäsuoja (toinen kanava) otetaan käyttöön olemassa
+// olevalle ryhmälle asetuksista - ei ryhmän luonnin yhteydessä (siitä
+// vastaa showSaveLinkNowDialog). Koodi on juuri generoitu tässä
+// tallennuksessa eikä sitä ole näytetty käyttäjälle missään vaiheessa
+// aiemmin, joten se pitää tarjota kopioitavaksi juuri nyt - muuten
+// käyttäjä joutuisi itse muistamaan avata asetukset uudelleen löytääkseen
+// sen. Palauttaa Promisen joka resolvoituu kun käyttäjä painaa "Jatka".
+function showSecondFactorEnabledDialog(cfg) {
+  return new Promise((resolve) => {
+    const secondLink = buildSecondFactorLink(cfg);
+    const overlay = document.createElement("div");
+    overlay.className = "overlay";
+    overlay.style.display = "flex";
+    overlay.innerHTML = `
+      <div class="onboard-card">
+        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Lisäsuoja otettu käyttöön</h2>
+        <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
+          Ryhmälle <strong>"${escapeHtml(cfg.groupName)}"</strong> luotiin
+          juuri toisen kanavan koodi. Lähetä se ryhmän jäsenille
+          <u>eri viestillä</u> kuin liittymislinkki - esimerkiksi
+          tekstiviestillä, jos liittymislinkki menee WhatsAppissa.
+        </p>
+        <button class="btn btn-primary" id="secondFactorEnabledCopyBtn">Kopioi toisen kanavan koodi</button>
+        <p id="secondFactorEnabledStatus" class="hint hint-ok" style="min-height:16px;"></p>
+        <button class="btn btn-secondary" id="secondFactorEnabledContinueBtn">Jatka karttaan</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const statusEl = overlay.querySelector("#secondFactorEnabledStatus");
+    overlay.querySelector("#secondFactorEnabledCopyBtn").addEventListener("click", () => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(secondLink).then(() => {
+          statusEl.textContent = "Toisen kanavan koodi kopioitu!";
+        }).catch(() => { statusEl.textContent = secondLink; });
+      } else {
+        statusEl.textContent = secondLink;
+      }
+    });
+
+    overlay.querySelector("#secondFactorEnabledContinueBtn").addEventListener("click", () => {
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve();
+    });
+  });
+}
+
 function attachConfigFormHandlers(container, onSave) {
   // Tunnistetaan onko tämä täysin tuore ryhmä (ensimmäinen onboarding, ei
   // vielä mitään ryhmää) - renderConfigForm ei renderöi "Luo uusi ryhmä"
@@ -393,6 +491,12 @@ function attachConfigFormHandlers(container, onSave) {
     const useSecondFactorEl = container.querySelector("#cfg_useSecondFactor");
     const useSecondFactor = useSecondFactorEl ? useSecondFactorEl.checked : false;
     const existingPin = container.querySelector("#cfg_pin").value.trim();
+    // Käytettävyysparannus (27.7.2026): jos lisäsuoja otetaan käyttöön juuri
+    // NYT (ei ollut käytössä ennen tätä tallennusta), koodi pitää näyttää
+    // käyttäjälle kopioitavaksi VÄLITTÖMÄSTI - ei riitä että "Kopioi toisen
+    // kanavan koodi" -nappi ilmestyy asetuksiin vasta seuraavalla avauksella
+    // (ks. showSecondFactorEnabledDialog alla).
+    const pinWasNewlyEnabled = useSecondFactor && !existingPin;
     const pin = useSecondFactor ? (existingPin || generatePin()) : "";
     const cfg = {
       groupCode,
@@ -422,13 +526,19 @@ function attachConfigFormHandlers(container, onSave) {
       // sulkea koko selaimen (tai yksityisen ikkunan, joka pyyhkii kaiken
       // sulkemisen yhteydessä) koskaan palaamatta asetuksiin.
       showSaveLinkNowDialog(cfg).then(() => onSave(cfg));
+    } else if (pinWasNewlyEnabled) {
+      // Lisäsuoja otettiin käyttöön olemassa olevaan ryhmään (ei liity
+      // ryhmän luontiin, joten showSaveLinkNowDialog ei laukea) - näytetään
+      // silti pakollinen väliaskel, koska koodi on juuri äsken generoitu ja
+      // sen jakaminen unohtuu helposti jos asetusikkuna sulkeutuu suoraan.
+      showSecondFactorEnabledDialog(cfg).then(() => onSave(cfg));
     } else {
       onSave(cfg);
     }
   });
 
   // Kerää jakolinkin rakentamiseen tarvittavat kentät lomakkeesta. Käytetään
-  // sekä "Kopioi jakolinkki"- että "Jaa..."-napin käsittelijässä, jotta
+  // sekä "Kopioi liittymislinkki"- että "Jaa..."-napin käsittelijässä, jotta
   // kenttien luku ei ole kahdessa paikassa.
   function collectShareCfg() {
     return {
@@ -504,7 +614,7 @@ function attachConfigFormHandlers(container, onSave) {
         url: link,
       }).catch(() => {
         // Käyttäjä perui jakamisen tai selain esti sen hiljaa - ei tehdä mitään,
-        // linkki on silti "Kopioi jakolinkki" -napin takana.
+        // linkki on silti "Kopioi liittymislinkki" -napin takana.
       });
     } else {
       // Ei Web Share API -tukea: avataan wa.me suoraan valmiiksi täytetyllä
@@ -531,12 +641,8 @@ function showNewGroupWarningDialog(currentLabel, currentCfgForLink) {
         <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 4px;">
           Tällä laitteella on käytössä ryhmä <strong>"${escapeHtml(currentLabel)}"</strong>.
         </p>
-        <p style="font-size:12px; line-height:1.5; color:#9a3412; background:#fff7ed; border-radius:8px; padding:8px 10px; margin:12px 0 4px;">
-          <strong>Muista ensin:</strong> jos et ole tallentanut/jakanut tämän
-          ryhmän liittymislinkkiä mihinkään, uuden ryhmän luominen sulkee
-          sinut siitä ulos pysyvästi - linkkiä ei voi luoda uudelleen.
-        </p>
-        <button class="btn btn-secondary" id="newGroupCopyBtn" style="font-size:13px;">Kopioi ryhmän "${escapeHtml(currentLabel)}" linkki talteen</button>
+        ${unrecoverableLinkWarningHtml(currentLabel)}
+        <button class="btn btn-secondary" id="newGroupCopyBtn" style="font-size:13px; margin-top:6px;">Kopioi ryhmän "${escapeHtml(currentLabel)}" linkki talteen</button>
         <p id="newGroupCopyStatus" class="hint hint-ok" style="min-height:16px;"></p>
         <button class="btn btn-primary" id="newGroupProceedBtn">Jatka, olen tallentanut linkin</button>
         <button class="btn btn-secondary" id="newGroupCancelBtn">Peruuta</button>
@@ -659,7 +765,7 @@ function showNewGroupWarningDialog(currentLabel, currentCfgForLink) {
 
 function showOnboarding(existing, urlCfg, onSave) {
   const el = document.getElementById("onboarding");
-  el.innerHTML = renderConfigForm(existing, urlCfg);
+  el.innerHTML = renderConfigForm(existing, urlCfg, { isSettings: false });
   el.style.display = "flex";
   attachConfigFormHandlers(el, (cfg) => {
     el.style.display = "none";
@@ -672,7 +778,7 @@ function showSettingsOverlay(onSave) {
   overlay.id = "settingsOverlay";
   overlay.className = "overlay";
   overlay.style.display = "flex";
-  overlay.innerHTML = renderConfigForm(loadConfig(), {});
+  overlay.innerHTML = renderConfigForm(loadConfig(), {}, { isSettings: true });
 
   // Sulje-ikoni - mahdollistaa asetusten tarkastelun/sulkemisen ilman että
   // lomake pitää tallentaa ja startPackTracker käynnistyy uudelleen.
@@ -1227,17 +1333,18 @@ function promptForSecondFactor(groupLabel) {
     overlay.style.display = "flex";
     overlay.innerHTML = `
       <div class="onboard-card">
-        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Ryhmä "${escapeHtml(groupLabel)}" vaatii toisen koodin</h2>
+        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Ryhmä "${escapeHtml(groupLabel)}" vaatii toisen kanavan koodin</h2>
         <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
-          Tämän ryhmän perustaja on ottanut käyttöön lisäsuojan. Liitä alle
-          joko toisen kanavan linkki kokonaisuudessaan, tai pelkkä koodi
-          jonka sait erikseen (esim. tekstiviestillä).
+          Tämän ryhmän perustaja lähetti sinulle liittymislinkin lisäksi
+          erillisen toisen kanavan koodin (esim. tekstiviestillä, jos
+          liittymislinkki tuli WhatsAppissa). Liitä se koodi tai sen
+          sisältävä linkki alle.
         </p>
-        <input id="secondFactorInput" placeholder="Liitä koodi tai linkki tähän"
+        <input id="secondFactorInput" placeholder="Liitä toisen kanavan koodi tai linkki tähän"
           style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:15px; margin-bottom:8px; box-sizing:border-box;">
         <p id="secondFactorError" style="font-size:12px; color:#dc2626; min-height:16px; margin:0 0 8px;"></p>
         <button class="btn btn-primary" id="secondFactorSubmitBtn">Vahvista</button>
-        <button class="btn btn-secondary" id="secondFactorCancelBtn">Ei ole koodia vielä - peruuta</button>
+        <button class="btn btn-secondary" id="secondFactorCancelBtn">Ei ole toisen kanavan koodia vielä - peruuta</button>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -1247,7 +1354,7 @@ function promptForSecondFactor(groupLabel) {
     overlay.querySelector("#secondFactorSubmitBtn").addEventListener("click", () => {
       const pin = extractPinFromInput(input.value);
       if (!pin) {
-        errorEl.textContent = "Tunnistettavaa koodia ei löytynyt - tarkista että liitit oikean tekstin.";
+        errorEl.textContent = "Tunnistettavaa toisen kanavan koodia ei löytynyt - tarkista että liitit oikean tekstin.";
         return;
       }
       if (overlay.parentNode) document.body.removeChild(overlay);
@@ -1290,7 +1397,7 @@ function beginNormalOperation(db, auth, cfg) {
 function setRetryableSecondFactorStatus(db, auth, cfg) {
   const el = document.getElementById("statusText");
   if (!el) return;
-  el.textContent = "Tarvitset toisen koodin - kosketa tästä kun se on saatavilla";
+  el.textContent = "Tarvitset toisen kanavan koodin - kosketa tästä kun se on saatavilla";
   el.style.textDecoration = "underline";
   el.style.cursor = "pointer";
   el.onclick = async () => {
@@ -1344,7 +1451,7 @@ async function startPackTracker(cfg) {
     const { requiresSecondFactor } = await HaukuData.readGroupDoc(db, cfg);
 
     if (requiresSecondFactor && !cfg.pin) {
-      setStatus("Tämä ryhmä vaatii toisen koodin.");
+      setStatus("Tämä ryhmä vaatii toisen kanavan koodin.");
       const pin = await promptForSecondFactor(cfg.groupName || cfg.groupCode);
       if (!pin) {
         // Peruutettu - ei koodia vielä saatavilla. EI aloiteta kuuntelua/
@@ -2679,7 +2786,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v70";
+const APP_VERSION = "v71";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -2722,12 +2829,8 @@ function showGroupConflictDialog(currentLabel, linkLabel, currentCfgForLink) {
         <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 4px;">
           Avattu linkki vie ryhmään <strong>"${escapeHtml(linkLabel)}"</strong>.
         </p>
-        <p style="font-size:12px; line-height:1.5; color:#9a3412; background:#fff7ed; border-radius:8px; padding:8px 10px; margin:12px 0 4px;">
-          <strong>Muista ensin:</strong> jos et ole tallentanut/jakanut ryhmän
-          "${escapeHtml(currentLabel)}" liittymislinkkiä mihinkään, vaihtaminen
-          sulkee sinut siitä ulos pysyvästi - linkkiä ei voi luoda uudelleen.
-        </p>
-        <button class="btn btn-secondary" id="conflictCopyCurrentBtn" style="font-size:13px;">Kopioi ryhmän "${escapeHtml(currentLabel)}" linkki talteen</button>
+        ${unrecoverableLinkWarningHtml(currentLabel)}
+        <button class="btn btn-secondary" id="conflictCopyCurrentBtn" style="font-size:13px; margin-top:6px;">Kopioi ryhmän "${escapeHtml(currentLabel)}" linkki talteen</button>
         <p id="conflictCopyStatus" class="hint hint-ok" style="min-height:16px;"></p>
         <button class="btn btn-primary" id="conflictSwitchBtn">Vaihda ryhmään "${escapeHtml(linkLabel)}"</button>
         <button class="btn btn-secondary" id="conflictStayBtn">Jatka ryhmässä "${escapeHtml(currentLabel)}"</button>
