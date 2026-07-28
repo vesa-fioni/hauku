@@ -202,9 +202,9 @@ function renderConfigForm(existing, urlCfg, opts) {
         Käytä lisäsuojaa (toinen kanava, valinnainen)
       </label>
       <p class="hint">
-        Lisäsuoja tarkoittaa erillistä toisen kanavan linkkiä, joka pitää
+        Lisäsuoja tarkoittaa erillistä lisäsuojan linkkiä, joka pitää
         lähettää eri viestillä kuin liittymislinkki - esimerkiksi
-        liittymislinkki WhatsAppissa ja toisen kanavan linkki
+        liittymislinkki WhatsAppissa ja lisäsuojan linkki
         tekstiviestillä. Vastaanottaja pääsee ryhmään avaamalla kummankin
         linkin - hänen ei tarvitse kirjoittaa mitään käsin. Tämä suojaa
         ryhmääsi siltä, että liittymislinkki päätyisi vahingossa väärille
@@ -346,7 +346,7 @@ function unrecoverableLinkWarningHtml(groupLabel) {
 // käyttäjä painaa "Jatka karttaan".
 //
 // Käytettävyysparannus (27.7.2026, B1): jos ryhmällä on lisäsuoja, kaksi
-// erillistä kopiointitointa (liittymislinkki + toisen kanavan linkki) ei
+// erillistä kopiointitointa (liittymislinkki + lisäsuojan linkki) ei
 // enää näy samalla ruudulla yhtä aikaa - ne on jaettu kahdeksi peräkkäiseksi
 // vaiheeksi ("Vaihe 1/2", "Vaihe 2/2"), ja kunkin vaiheen "Seuraava"/"Jatka
 // karttaan" -nappi pysyy pois käytöstä kunnes kyseisen vaiheen kopiointi on
@@ -417,13 +417,13 @@ function showSaveLinkNowDialog(cfg) {
           ${stepLabelHtml(2)}
           <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Lisäsuojan linkki</h2>
           <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
-            Lähetä tämä toisen kanavan linkki <u>eri viestillä</u> kuin
+            Lähetä tämä lisäsuojan linkki <u>eri viestillä</u> kuin
             liittymislinkki - esimerkiksi tekstiviestillä, jos liittymislinkki
             meni WhatsAppissa. Vastaanottaja pääsee ryhmään avaamalla sen -
             ei tarvitse kirjoittaa mitään. Jos molemmat kulkevat samaa
             reittiä, lisäsuoja ei tee mitään.
           </p>
-          <button class="btn btn-primary" id="saveLinkCopySecondBtn">Kopioi toisen kanavan linkki</button>
+          <button class="btn btn-primary" id="saveLinkCopySecondBtn">Kopioi lisäsuojan linkki</button>
           <p id="saveLinkSecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
           <button class="btn btn-secondary" id="saveLinkContinueBtn" disabled>Jatka karttaan</button>
         </div>
@@ -475,13 +475,13 @@ function showSecondFactorEnabledDialog(cfg) {
         <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Lisäsuoja otettu käyttöön</h2>
         <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
           Ryhmälle <strong>"${escapeHtml(cfg.groupName)}"</strong> luotiin
-          juuri toisen kanavan linkki. Lähetä se ryhmän jäsenille
+          juuri lisäsuojan linkki. Lähetä se ryhmän jäsenille
           <u>eri viestillä</u> kuin liittymislinkki - esimerkiksi
           tekstiviestillä, jos liittymislinkki menee WhatsAppissa.
           Vastaanottaja pääsee ryhmään avaamalla sen - ei tarvitse
           kirjoittaa mitään.
         </p>
-        <button class="btn btn-primary" id="secondFactorEnabledCopyBtn">Kopioi toisen kanavan linkki</button>
+        <button class="btn btn-primary" id="secondFactorEnabledCopyBtn">Kopioi lisäsuojan linkki</button>
         <p id="secondFactorEnabledStatus" class="hint hint-ok" style="min-height:16px;"></p>
         <button class="btn btn-secondary" id="secondFactorEnabledContinueBtn" disabled>Jatka karttaan</button>
       </div>
@@ -540,7 +540,7 @@ async function establishGroupOnServer(cfg) {
 }
 
 // Käytettävyysparannus (27.7.2026): jakotoiminnot ("Kopioi liittymislinkki",
-// "Jaa...", "Kopioi toisen kanavan linkki") eivät enää ole aina näkyvissä
+// "Jaa...", "Kopioi lisäsuojan linkki") eivät enää ole aina näkyvissä
 // osana peruslomaketta - ne avautuvat tästä yhdestä "Kutsu uusi jäsen
 // ryhmään" -napista pyynnöstä. Tämä linjaa asetusnäkymän käytöksen sen
 // kanssa mikä on jo käytössä uuden ryhmän luonnissa: jakaminen on oma,
@@ -560,18 +560,40 @@ function showInviteDialog(cfg) {
   const overlay = document.createElement("div");
   overlay.className = "overlay";
   overlay.style.display = "flex";
+  // Käytettävyysparannus (27.7.2026): jos ryhmässä on lisäsuoja, dialogi
+  // selittää kerran ylhäällä MIKSI kaksi eri linkkiä tarvitaan, ja kumpaakin
+  // nappia edeltää pieni vaihemerkintä (sama visuaalinen tyyli kuin
+  // showSaveLinkNowDialogin pakollisessa velhossa, "VAIHE X/2") - jotta
+  // linkkien keskinäinen suhde on selvä eikä toinen näytä irralliselta,
+  // selittämättömältä lisäykseltä ensimmäisen vieressä.
+  const stepIntroHtml = hasSecondFactor
+    ? `<p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 16px;">
+         Tässä ryhmässä on käytössä lisäsuoja: liittyminen vaatii kaksi eri
+         viestillä lähetettyä linkkiä.
+       </p>`
+    : "";
+  const stepLabelHtml = (step, extra) => {
+    if (!hasSecondFactor) return "";
+    const suffix = extra ? ` · ${extra}` : "";
+    return `<p style="font-size:11px; font-weight:700; color:var(--orange-dark); text-transform:uppercase; letter-spacing:0.04em; margin:0 0 6px;">Liittyminen ${step}/2${suffix}</p>`;
+  };
   overlay.innerHTML = `
     <div class="onboard-card">
       <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Kutsu ryhmään "${escapeHtml(label)}"</h2>
+      ${stepIntroHtml}
+      ${stepLabelHtml(1)}
       <button class="btn btn-primary" id="inviteCopyBtn">Kopioi liittymislinkki</button>
       <p class="hint">Liitä linkki itse haluamaasi viestiin (esim. sähköposti tai ryhmäkeskustelu).</p>
       <p id="inviteCopyStatus" class="hint hint-ok" style="min-height:16px;"></p>
       <button class="btn btn-secondary" id="inviteShareAppBtn">Jaa... (esim. WhatsApp)</button>
       <p class="hint">Avaa puhelimen omat jakovaihtoehdot valmiiksi täytetyllä viestillä.</p>
       ${hasSecondFactor ? `
-      <button class="btn btn-secondary" id="inviteCopySecondBtn" style="margin-top:14px;">Kopioi toisen kanavan linkki</button>
-      <p id="inviteCopySecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
-      <p class="hint">Muista lähettää tämä eri viestillä kuin liittymislinkki. Vastaanottaja pääsee ryhmään avaamalla linkin - ei tarvitse kirjoittaa mitään.</p>
+      <div style="margin-top:18px;">
+        ${stepLabelHtml(2, "Lisäsuoja")}
+        <button class="btn btn-secondary" id="inviteCopySecondBtn">Kopioi lisäsuojan linkki</button>
+        <p id="inviteCopySecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
+        <p class="hint">Muista lähettää tämä eri viestillä kuin liittymislinkki. Vastaanottaja pääsee ryhmään avaamalla linkin - ei tarvitse kirjoittaa mitään.</p>
+      </div>
       ` : ""}
       <button class="btn btn-secondary" id="inviteCloseBtn">Valmis</button>
     </div>
@@ -1489,19 +1511,19 @@ function promptForSecondFactor(groupLabel) {
     overlay.style.display = "flex";
     overlay.innerHTML = `
       <div class="onboard-card">
-        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Ryhmä "${escapeHtml(groupLabel)}" vaatii toisen kanavan linkin</h2>
+        <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Ryhmä "${escapeHtml(groupLabel)}" vaatii lisäsuojan linkin</h2>
         <p style="font-size:14px; line-height:1.6; color:#333; margin:0 0 12px;">
           Tämän ryhmän perustaja lähetti sinulle liittymislinkin lisäksi
-          erillisen toisen kanavan linkin (esim. tekstiviestillä, jos
+          erillisen lisäsuojan linkin (esim. tekstiviestillä, jos
           liittymislinkki tuli WhatsAppissa). Jos et napauttanut sitä
           suoraan, kopioi se viestistä ja liitä alle - älä kirjoita sitä
           käsin.
         </p>
-        <input id="secondFactorInput" placeholder="Liitä toisen kanavan linkki tähän"
+        <input id="secondFactorInput" placeholder="Liitä lisäsuojan linkki tähän"
           style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:15px; margin-bottom:8px; box-sizing:border-box;">
         <p id="secondFactorError" style="font-size:12px; color:#dc2626; min-height:16px; margin:0 0 8px;"></p>
         <button class="btn btn-primary" id="secondFactorSubmitBtn">Vahvista</button>
-        <button class="btn btn-secondary" id="secondFactorCancelBtn">Ei ole toisen kanavan linkkiä vielä - peruuta</button>
+        <button class="btn btn-secondary" id="secondFactorCancelBtn">Ei ole lisäsuojan linkkiä vielä - peruuta</button>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -1511,7 +1533,7 @@ function promptForSecondFactor(groupLabel) {
     overlay.querySelector("#secondFactorSubmitBtn").addEventListener("click", () => {
       const pin = extractPinFromInput(input.value);
       if (!pin) {
-        errorEl.textContent = "Tunnistettavaa toisen kanavan linkkiä ei löytynyt - tarkista että liitit oikean tekstin.";
+        errorEl.textContent = "Tunnistettavaa lisäsuojan linkkiä ei löytynyt - tarkista että liitit oikean tekstin.";
         return;
       }
       if (overlay.parentNode) document.body.removeChild(overlay);
@@ -1554,7 +1576,7 @@ function beginNormalOperation(db, auth, cfg) {
 function setRetryableSecondFactorStatus(db, auth, cfg) {
   const el = document.getElementById("statusText");
   if (!el) return;
-  el.textContent = "Tarvitset toisen kanavan linkin - kosketa tästä kun se on saatavilla";
+  el.textContent = "Tarvitset lisäsuojan linkin - kosketa tästä kun se on saatavilla";
   el.style.textDecoration = "underline";
   el.style.cursor = "pointer";
   el.onclick = async () => {
@@ -1608,7 +1630,7 @@ async function startPackTracker(cfg) {
     const { requiresSecondFactor } = await HaukuData.readGroupDoc(db, cfg);
 
     if (requiresSecondFactor && !cfg.pin) {
-      setStatus("Tämä ryhmä vaatii toisen kanavan linkin.");
+      setStatus("Tämä ryhmä vaatii lisäsuojan linkin.");
       const pin = await promptForSecondFactor(cfg.groupName || cfg.groupCode);
       if (!pin) {
         // Peruutettu - ei linkkiä vielä saatavilla. EI aloiteta kuuntelua/
@@ -2943,7 +2965,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v74";
+const APP_VERSION = "v75";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
