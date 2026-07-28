@@ -213,14 +213,23 @@ function renderConfigForm(existing, urlCfg, opts) {
     </div>
     ${isNewGroup
       ? `<p class="hint">Uusi ryhmä luodaan tallennettaessa - jaa liittymislinkki tallennuksen jälkeen kutsuaksesi muut.</p>`
-      : isJoiningViaLink
-      ? `<p class="hint">
-           <a href="#" id="cfg_new_group_link">En halua liittyä tähän - luo minulle oma uusi ryhmä sen sijaan</a>
-         </p>`
-      : `<p class="hint">
-           <a href="#" id="cfg_new_group_link">Luo uusi ryhmä tämän sijaan</a>
-         </p>`}
+      : `<p id="cfg_new_group_hint" class="hint" style="display:none;"></p>`}
   `;
+
+  // Käytettävyysparannus (27.7.2026): "Luo uusi ryhmä" -toiminto oli aiemmin
+  // pelkkä tekstilinkki heti ryhmän nimen alla - siirretty nyt lomakkeen
+  // alaosaan samanlaiseksi napiksi kuin "Kutsu uusi jäsen ryhmään", jotta
+  // molemmat "toisen tason" toiminnot (kutsu / vaihda ryhmää) näyttävät
+  // yhteneväisiltä eivätkä toinen ole nappi ja toinen pelkkä linkki. Sama
+  // #cfg_new_group_link-id säilytetty, koska attachConfigFormHandlers
+  // päättelee tästä elementistä onko kyseessä täysin tuore ryhmä
+  // (groupWasFreshlyCreated).
+  const newGroupLabel = isJoiningViaLink
+    ? "En halua liittyä tähän - luo minulle oma uusi ryhmä sen sijaan"
+    : "Luo uusi ryhmä tämän sijaan";
+  const newGroupButtonHtml = isNewGroup
+    ? ""
+    : `<button type="button" id="cfg_new_group_link" class="btn btn-secondary">${newGroupLabel}</button>`;
 
   const firebaseFields = firebaseFromUrl
     ? `<p class="hint hint-ok">Firebase-yhteys jo asetettu linkin kautta</p>
@@ -309,6 +318,7 @@ function renderConfigForm(existing, urlCfg, opts) {
         <button id="cfg_save" class="btn btn-primary">Tallenna</button>
         <p id="cfg_save_error" class="hint" style="color:#dc2626;"></p>
         ${isNewGroup ? "" : `<button id="cfg_invite" class="btn btn-secondary">Kutsu uusi jäsen ryhmään</button>`}
+        ${newGroupButtonHtml}
       </div>
 
       <p class="footnote">
@@ -434,7 +444,7 @@ function showSaveLinkNowDialog(cfg) {
         const onCopied = () => { continueBtn.disabled = false; };
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(secondLink).then(() => {
-            secondStatusEl.textContent = "Toisen kanavan linkki kopioitu!";
+            secondStatusEl.textContent = "Lisäsuojan linkki kopioitu!";
             onCopied();
           }).catch(() => { secondStatusEl.textContent = secondLink; onCopied(); });
         } else {
@@ -494,7 +504,7 @@ function showSecondFactorEnabledDialog(cfg) {
       const onCopied = () => { continueBtn.disabled = false; };
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(secondLink).then(() => {
-          statusEl.textContent = "Toisen kanavan linkki kopioitu!";
+          statusEl.textContent = "Lisäsuojan linkki kopioitu!";
           onCopied();
         }).catch(() => { statusEl.textContent = secondLink; onCopied(); });
       } else {
@@ -577,6 +587,13 @@ function showInviteDialog(cfg) {
     const suffix = extra ? ` · ${extra}` : "";
     return `<p style="font-size:11px; font-weight:700; color:var(--orange-dark); text-transform:uppercase; letter-spacing:0.04em; margin:0 0 6px;">Liittyminen ${step}/2${suffix}</p>`;
   };
+  // "Jaa..." on tässä pieni tekstilinkki oman Kopioi-nappinsa alla, ei enää
+  // iso nappi (ks. keskustelu 27.7.2026) - ja kummallakin linkillä (liittymis-
+  // ja lisäsuojalinkillä) on nyt OMA erillinen Jaa-linkkinsä, koska ne
+  // menevät eri viesteihin eikä yksi yhteinen jakotoiminto voisi tietää
+  // kumpaa linkkiä käyttäjä sillä hetkellä haluaa jakaa.
+  const shareLinkHtml = (id) =>
+    `<p class="hint" style="margin-top:6px;"><a href="#" id="${id}">Jaa...</a></p>`;
   overlay.innerHTML = `
     <div class="onboard-card">
       <h2 style="color:var(--forest); font-size:17px; margin:0 0 14px;">Kutsu ryhmään "${escapeHtml(label)}"</h2>
@@ -584,15 +601,15 @@ function showInviteDialog(cfg) {
       ${stepLabelHtml(1)}
       <button class="btn btn-primary" id="inviteCopyBtn">Kopioi liittymislinkki</button>
       <p class="hint">Liitä linkki itse haluamaasi viestiin (esim. sähköposti tai ryhmäkeskustelu).</p>
+      ${shareLinkHtml("inviteShareBtn")}
       <p id="inviteCopyStatus" class="hint hint-ok" style="min-height:16px;"></p>
-      <button class="btn btn-secondary" id="inviteShareAppBtn">Jaa... (esim. WhatsApp)</button>
-      <p class="hint">Avaa puhelimen omat jakovaihtoehdot valmiiksi täytetyllä viestillä.</p>
       ${hasSecondFactor ? `
       <div style="margin-top:18px;">
         ${stepLabelHtml(2, "Lisäsuoja")}
         <button class="btn btn-secondary" id="inviteCopySecondBtn">Kopioi lisäsuojan linkki</button>
-        <p id="inviteCopySecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
         <p class="hint">Muista lähettää tämä eri viestillä kuin liittymislinkki. Vastaanottaja pääsee ryhmään avaamalla linkin - ei tarvitse kirjoittaa mitään.</p>
+        ${shareLinkHtml("inviteShareSecondBtn")}
+        <p id="inviteCopySecondStatus" class="hint hint-ok" style="min-height:16px;"></p>
       </div>
       ` : ""}
       <button class="btn btn-secondary" id="inviteCloseBtn">Valmis</button>
@@ -606,47 +623,77 @@ function showInviteDialog(cfg) {
     if (e.target === overlay) closeOverlay();
   });
 
+  // Käytettävyysparannus (27.7.2026): kun ensimmäinen linkki on kopioitu,
+  // vaiheen 2 nappi ("Kopioi lisäsuojan linkki") vaihtuu harmaasta
+  // vihreäksi/korostetuksi (sama tyyli kuin ensisijainen nappi) - tämä
+  // ohjaa katsetta seuraavaan tekemättömään vaiheeseen ilman että mitään
+  // lukitaan (tämä dialogi ei ole pakollinen, joten kumpaakin nappia voi
+  // silti painaa missä järjestyksessä tahansa).
+  const copyBtn = overlay.querySelector("#inviteCopyBtn");
+  const secondBtn = overlay.querySelector("#inviteCopySecondBtn");
+  const markFirstStepDone = () => {
+    if (!secondBtn) return;
+    copyBtn.classList.remove("btn-primary");
+    copyBtn.classList.add("btn-secondary");
+    secondBtn.classList.remove("btn-secondary");
+    secondBtn.classList.add("btn-primary");
+  };
+
   const copyStatusEl = overlay.querySelector("#inviteCopyStatus");
-  overlay.querySelector("#inviteCopyBtn").addEventListener("click", () => {
+  copyBtn.addEventListener("click", () => {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(link).then(() => {
         copyStatusEl.textContent = "Linkki kopioitu leikepöydälle!";
-      }).catch(() => { copyStatusEl.textContent = link; });
+        markFirstStepDone();
+      }).catch(() => { copyStatusEl.textContent = link; markFirstStepDone(); });
     } else {
       copyStatusEl.textContent = link;
+      markFirstStepDone();
     }
   });
 
   // "Jaa..." - avaa laitteen oman jakovalikon (Web Share API), jossa
   // WhatsApp on yleensä yksi vaihtoehto muiden joukossa. Jos Web Share API
   // ei ole tuettu (esim. työpöytäselain), pudotaan suoraan wa.me-syvälinkkiin.
-  overlay.querySelector("#inviteShareAppBtn").addEventListener("click", () => {
-    const message = `Liity Hauku-ryhmään "${label}": ${link}`;
-    if (navigator.share) {
-      navigator.share({
-        title: "Hauku - liity ryhmään",
-        text: `Liity Hauku-ryhmään "${label}":`,
-        url: link,
-      }).catch(() => {
-        // Käyttäjä perui jakamisen tai selain esti sen hiljaa - ei tehdä
-        // mitään, linkki on silti "Kopioi liittymislinkki" -napin takana.
-      });
-    } else {
-      window.open("https://wa.me/?text=" + encodeURIComponent(message), "_blank");
-    }
-  });
+  // Sama toiminto uudelleenkäytetty molemmille linkeille (targetLink/
+  // targetLabel vaihtuu, muu logiikka sama).
+  function attachShareHandler(buttonId, targetLink, isSecond) {
+    const btn = overlay.querySelector("#" + buttonId);
+    if (!btn) return;
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const message = isSecond
+        ? `Hauku-ryhmän "${label}" lisäsuojan linkki: ${targetLink}`
+        : `Liity Hauku-ryhmään "${label}": ${targetLink}`;
+      if (navigator.share) {
+        navigator.share({
+          title: isSecond ? "Hauku - lisäsuojan linkki" : "Hauku - liity ryhmään",
+          text: isSecond ? `Hauku-ryhmän "${label}" lisäsuojan linkki:` : `Liity Hauku-ryhmään "${label}":`,
+          url: targetLink,
+        }).catch(() => {
+          // Käyttäjä perui jakamisen tai selain esti sen hiljaa - ei tehdä
+          // mitään, linkki on silti "Kopioi"-napin takana.
+        });
+      } else {
+        window.open("https://wa.me/?text=" + encodeURIComponent(message), "_blank");
+      }
+      if (!isSecond) markFirstStepDone(); // jakaminenkin lasketaan "tehdyksi" vaiheeksi 1
+    });
+  }
+  attachShareHandler("inviteShareBtn", link, false);
 
   if (hasSecondFactor) {
     const secondStatusEl = overlay.querySelector("#inviteCopySecondStatus");
-    overlay.querySelector("#inviteCopySecondBtn").addEventListener("click", () => {
+    secondBtn.addEventListener("click", () => {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(secondLink).then(() => {
-          secondStatusEl.textContent = "Toisen kanavan linkki kopioitu!";
+          secondStatusEl.textContent = "Lisäsuojan linkki kopioitu!";
         }).catch(() => { secondStatusEl.textContent = secondLink; });
       } else {
         secondStatusEl.textContent = secondLink;
       }
     });
+    attachShareHandler("inviteShareSecondBtn", secondLink, true);
   }
 }
 
@@ -872,8 +919,18 @@ function showNewGroupWarningDialog(currentLabel, currentCfgForLink) {
         nameInput.value = "";
         nameInput.placeholder = "esim. Syyshirvijahti";
         nameInput.focus();
-        const hint = newGroupLink.closest("p");
-        if (hint) hint.textContent = "Uusi ryhmä luodaan tallennettaessa - jaa linkki tallennuksen jälkeen kutsuaksesi muut.";
+        // Nappi ei enää ole wrapattu <p class="hint">-elementtiin (siirretty
+        // omaksi napikseen lomakkeen alaosaan, ks. keskustelu 27.7.2026) -
+        // päivitetään sen sijaan erillistä #cfg_new_group_hint-elementtiä
+        // ryhmän nimen alla, ja piilotetaan itse nappi koska sen tehtävä on
+        // nyt tehty (ryhmä on jo "tuore", uudelleenklikkaus ei olisi
+        // mielekästä).
+        const newGroupHint = container.querySelector("#cfg_new_group_hint");
+        if (newGroupHint) {
+          newGroupHint.textContent = "Uusi ryhmä luodaan tallennettaessa - jaa liittymislinkki tallennuksen jälkeen kutsuaksesi muut.";
+          newGroupHint.style.display = "block";
+        }
+        newGroupLink.style.display = "none";
       };
 
       const existingGroupCode = container.querySelector("#cfg_group").value.trim();
@@ -2965,7 +3022,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v75";
+const APP_VERSION = "v76";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
