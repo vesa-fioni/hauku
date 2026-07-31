@@ -87,6 +87,15 @@ class MainActivity : ComponentActivity() {
                                 WebView(context).apply {
                                     settings.javaScriptEnabled = true
                                     settings.domStorageEnabled = true
+
+                                    // Firebase Authin auth-iframe (eri domain,
+                                    // hauku-3b13a.firebaseapp.com) tarvitsee
+                                    // kolmannen osapuolen evästepääsyn - WebView
+                                    // estää tämän oletuksena (ks. keskustelu
+                                    // 31.7.2026, valmistusohjeen kohta 13).
+                                    val cookieManager = android.webkit.CookieManager.getInstance()
+                                    cookieManager.setAcceptCookie(true)
+                                    cookieManager.setAcceptThirdPartyCookies(this, true)
                                     webViewClient = object : WebViewClient() {
                                         override fun onReceivedError(
                                             view: WebView?,
