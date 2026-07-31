@@ -97,6 +97,26 @@ class MainActivity : ComponentActivity() {
                                     cookieManager.setAcceptCookie(true)
                                     cookieManager.setAcceptThirdPartyCookies(this, true)
                                     webViewClient = object : WebViewClient() {
+                                        override fun shouldInterceptRequest(
+                                            view: WebView?,
+                                            request: android.webkit.WebResourceRequest?
+                                        ): android.webkit.WebResourceResponse? {
+                                            val url = request?.url?.toString() ?: ""
+                                            // Hauku käyttää vain signInAnonymously():a,
+                                            // joten Firebase Authin OAuth-apuiframe
+                                            // (popup/redirect-kirjautumisia varten)
+                                            // on tarpeeton - estetään sen lataus,
+                                            // jotta epäonnistunut iframe-navigointi
+                                            // ei peitä koko näkyvää WebView'ta
+                                            // (ks. keskustelu 31.7.2026).
+                                            if (url.contains("/__/auth/iframe")) {
+                                                return android.webkit.WebResourceResponse(
+                                                    "text/plain", "utf-8", null
+                                                )
+                                            }
+                                            return super.shouldInterceptRequest(view, request)
+                                        }
+
                                         override fun onReceivedError(
                                             view: WebView?,
                                             request: android.webkit.WebResourceRequest?,
