@@ -2,8 +2,11 @@ package app.hauku.android
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
@@ -38,8 +41,6 @@ class MainActivity : ComponentActivity() {
     private val backgroundLocationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ ->
-        // Jatketaan riippumatta tuloksesta - palvelu käynnistetään joka
-        // tapauksessa vaiheen 1 luvilla, tausta-sijainti on paras yritys
         startTrackingService()
     }
 
@@ -53,6 +54,11 @@ class MainActivity : ComponentActivity() {
         } else {
             permissionStatus = "Sijaintilupaa ei myönnetty - taustaseuranta ei voi käynnistyä."
         }
+    }
+
+    private fun hasNativePermission(permission: String): Boolean {
+        return ContextCompat.checkSelfPermission(this, permission) ==
+            PackageManager.PERMISSION_GRANTED
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,11 +75,6 @@ class MainActivity : ComponentActivity() {
                                 Text("Käynnistä tausta-seuranta (testi)")
                             }
                         }
-                        // Näkyvä WebView - täyttää lopun ruudusta.
-                        // Tämä on VAIN näkyvä instanssi (ks. valmistusohjeen
-                        // kohta 4.4-4.5) - EI headless-instanssi, joka
-                        // rakennetaan myöhemmin erikseen foreground servicen
-                        // sisään, koskaan liittämättä sitä mihinkään UI-puuhun.
                         AndroidView(
                             modifier = Modifier.fillMaxWidth().fillMaxSize(),
                             factory = { context ->
@@ -81,6 +82,40 @@ class MainActivity : ComponentActivity() {
                                     settings.javaScriptEnabled = true
                                     settings.domStorageEnabled = true
                                     webViewClient = WebViewClient()
+
+                                    // Silta natiivin ja WebView'n omien
+                                    // lupamallien välillä (ks. keskustelu
+                                    // 31.7.2026, valmistusohjeen kohta 4.5).
+                                    // Myönnetään WebView'lle vain se, mitä
+                                    // natiivi sovellus on JO saanut käyttö-
+                                    // järjestelmältä - ei mitään lisää.
+                                    webChromeClient = object : WebChromeClient() {
+                                        override fun onGeolocationPermissionsShowPrompt(
+                                            origin: String?,
+                                            callback: android.webkit.GeolocationPermissions.Callback?
+                                        ) {
+                                            val granted = hasNativePermission(
+                                                Manifest.permission.ACCESS_FINE_LOCATION
+                                            )
+                                            callback?.invoke(origin, granted, false)
+                                        }
+
+                                        override fun onPermissionRequest(
+                                            request: PermissionRequest?
+                                        ) {
+                                            val resources = request?.resources ?: return
+                                            val toGrant = resources.filter { resource ->
+                                                resource == PermissionRequest.RESOURCE_AUDIO_CAPTURE &&
+                                                    hasNativePermission(Manifest.permission.RECORD_AUDIO)
+                                            }
+                                            if (toGrant.isNotEmpty()) {
+                                                request.grant(toGrant.toTypedArray())
+                                            } else {
+                                                request.deny()
+                                            }
+                                        }
+                                    }
+
                                     loadUrl("https://hauku.app")
                                 }
                             }
@@ -106,7 +141,6 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         } else {
-            // Alle Android 10: ACCESS_FINE_LOCATION riittää myös taustalla
             startTrackingService()
         }
     }
