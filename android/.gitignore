@@ -1,26 +1,15 @@
-# Android Studio / Gradle -projektin .gitignore
-
 *.iml
-.gradle/
+.gradle
 /local.properties
-/.idea/
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
 .DS_Store
-/build/
-/captures/
-.externalNativeBuild/
-.cxx/
+/build
+/captures
+.externalNativeBuild
+.cxx
 local.properties
-
-# Android Studio -moduulien build-hakemistot
-*/build/
-
-# Keystore-tiedostot (allekirjoitusavaimet) - EI KOSKAAN versionhallintaan
-*.jks
-*.keystore
-
-# Ladatut/generoidut natiivit kirjastot
-*.so
-
-# Log-tiedostot
-*.log
-
