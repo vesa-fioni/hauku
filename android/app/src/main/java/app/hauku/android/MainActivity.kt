@@ -66,9 +66,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Sallii Chrome DevTools -etäselauksen (chrome://inspect tietokoneen
-        // Chromessa) - väliaikainen debug-apu, poistetaan ennen julkaisua.
-        WebView.setWebContentsDebuggingEnabled(true)
+        // Chrome DevTools -etäselaus vain debug-builgeissa (ks. keskustelu
+        // 31.7.2026, valmistusohjeen kohta 17.3) - ei tuotantoon.
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
 
         setContent {
             HaukuTheme {
@@ -131,12 +131,14 @@ class MainActivity : ComponentActivity() {
                                             request: android.webkit.WebResourceRequest?,
                                             error: android.webkit.WebResourceError?
                                         ) {
-                                            android.util.Log.e(
-                                                "HaukuWebViewError",
-                                                "URL: ${request?.url} - " +
-                                                    "Virhe: ${error?.description} " +
-                                                    "(koodi ${error?.errorCode})"
-                                            )
+                                            if (BuildConfig.DEBUG) {
+                                                android.util.Log.e(
+                                                    "HaukuWebViewError",
+                                                    "URL: ${request?.url} - " +
+                                                        "Virhe: ${error?.description} " +
+                                                        "(koodi ${error?.errorCode})"
+                                                )
+                                            }
                                         }
 
                                         override fun onReceivedHttpError(
@@ -144,11 +146,13 @@ class MainActivity : ComponentActivity() {
                                             request: android.webkit.WebResourceRequest?,
                                             errorResponse: android.webkit.WebResourceResponse?
                                         ) {
-                                            android.util.Log.e(
-                                                "HaukuWebViewError",
-                                                "URL: ${request?.url} - " +
-                                                    "HTTP-status: ${errorResponse?.statusCode}"
-                                            )
+                                            if (BuildConfig.DEBUG) {
+                                                android.util.Log.e(
+                                                    "HaukuWebViewError",
+                                                    "URL: ${request?.url} - " +
+                                                        "HTTP-status: ${errorResponse?.statusCode}"
+                                                )
+                                            }
                                         }
                                     }
 
@@ -187,18 +191,27 @@ class MainActivity : ComponentActivity() {
                                         override fun onConsoleMessage(
                                             consoleMessage: android.webkit.ConsoleMessage?
                                         ): Boolean {
-                                            android.util.Log.d(
-                                                "HaukuWebView",
-                                                "${consoleMessage?.message()} " +
-                                                    "(${consoleMessage?.sourceId()}:" +
-                                                    "${consoleMessage?.lineNumber()})"
-                                            )
+                                            if (BuildConfig.DEBUG) {
+                                                android.util.Log.d(
+                                                    "HaukuWebView",
+                                                    "${consoleMessage?.message()} " +
+                                                        "(${consoleMessage?.sourceId()}:" +
+                                                        "${consoleMessage?.lineNumber()})"
+                                                )
+                                            }
                                             return true
                                         }
                                     }
 
                                     loadUrl("https://hauku.app")
                                 }
+                            },
+                            update = { webView ->
+                                // Pakottaa WebView'n mittaamaan/piirtämään
+                                // itsensä uudelleen Composen lopullisen koon
+                                // mukaan - korjaa WebView+Compose-yhdistelmän
+                                // tunnetun kokoheiton (ks. keskustelu 31.7.2026).
+                                webView.requestLayout()
                             }
                         )
                     }
