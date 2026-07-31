@@ -87,7 +87,32 @@ class MainActivity : ComponentActivity() {
                                 WebView(context).apply {
                                     settings.javaScriptEnabled = true
                                     settings.domStorageEnabled = true
-                                    webViewClient = WebViewClient()
+                                    webViewClient = object : WebViewClient() {
+                                        override fun onReceivedError(
+                                            view: WebView?,
+                                            request: android.webkit.WebResourceRequest?,
+                                            error: android.webkit.WebResourceError?
+                                        ) {
+                                            android.util.Log.e(
+                                                "HaukuWebViewError",
+                                                "URL: ${request?.url} - " +
+                                                    "Virhe: ${error?.description} " +
+                                                    "(koodi ${error?.errorCode})"
+                                            )
+                                        }
+
+                                        override fun onReceivedHttpError(
+                                            view: WebView?,
+                                            request: android.webkit.WebResourceRequest?,
+                                            errorResponse: android.webkit.WebResourceResponse?
+                                        ) {
+                                            android.util.Log.e(
+                                                "HaukuWebViewError",
+                                                "URL: ${request?.url} - " +
+                                                    "HTTP-status: ${errorResponse?.statusCode}"
+                                            )
+                                        }
+                                    }
 
                                     // Silta natiivin ja WebView'n omien
                                     // lupamallien välillä (ks. keskustelu
