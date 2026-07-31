@@ -120,6 +120,18 @@ class MainActivity : ComponentActivity() {
                                                 request.deny()
                                             }
                                         }
+
+                                        override fun onConsoleMessage(
+                                            consoleMessage: android.webkit.ConsoleMessage?
+                                        ): Boolean {
+                                            android.util.Log.d(
+                                                "HaukuWebView",
+                                                "${consoleMessage?.message()} " +
+                                                    "(${consoleMessage?.sourceId()}:" +
+                                                    "${consoleMessage?.lineNumber()})"
+                                            )
+                                            return true
+                                        }
                                     }
 
                                     loadUrl("https://hauku.app")
