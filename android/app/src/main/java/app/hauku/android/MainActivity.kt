@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         AndroidView(
-                            modifier = Modifier.fillMaxWidth().fillMaxSize(),
+                            modifier = Modifier.fillMaxWidth().weight(1f),
                             factory = { context ->
                                 WebView(context).apply {
                                     settings.javaScriptEnabled = true
