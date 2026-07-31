@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,6 +70,11 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Column(modifier = Modifier.padding(innerPadding)) {
                         Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "Hauku Android v${BuildConfig.VERSION_NAME} " +
+                                    "(build ${BuildConfig.VERSION_CODE})",
+                                style = MaterialTheme.typography.labelSmall
+                            )
                             Greeting(name = "Android")
                             Text(text = "Tausta-seurannan tila: $permissionStatus")
                             Button(onClick = { beginPermissionFlow() }) {
