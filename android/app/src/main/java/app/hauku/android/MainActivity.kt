@@ -4,12 +4,15 @@ import android.Manifest
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
@@ -21,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import app.hauku.android.ui.theme.HaukuTheme
 
@@ -57,12 +61,30 @@ class MainActivity : ComponentActivity() {
         setContent {
             HaukuTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Column(modifier = Modifier.padding(innerPadding).padding(16.dp)) {
-                        Greeting(name = "Android")
-                        Text(text = "Tausta-seurannan tila: $permissionStatus")
-                        Button(onClick = { beginPermissionFlow() }) {
-                            Text("Käynnistä tausta-seuranta (testi)")
+                    Column(modifier = Modifier.padding(innerPadding)) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Greeting(name = "Android")
+                            Text(text = "Tausta-seurannan tila: $permissionStatus")
+                            Button(onClick = { beginPermissionFlow() }) {
+                                Text("Käynnistä tausta-seuranta (testi)")
+                            }
                         }
+                        // Näkyvä WebView - täyttää lopun ruudusta.
+                        // Tämä on VAIN näkyvä instanssi (ks. valmistusohjeen
+                        // kohta 4.4-4.5) - EI headless-instanssi, joka
+                        // rakennetaan myöhemmin erikseen foreground servicen
+                        // sisään, koskaan liittämättä sitä mihinkään UI-puuhun.
+                        AndroidView(
+                            modifier = Modifier.fillMaxWidth().fillMaxSize(),
+                            factory = { context ->
+                                WebView(context).apply {
+                                    settings.javaScriptEnabled = true
+                                    settings.domStorageEnabled = true
+                                    webViewClient = WebViewClient()
+                                    loadUrl("https://hauku.app")
+                                }
+                            }
+                        )
                     }
                 }
             }
