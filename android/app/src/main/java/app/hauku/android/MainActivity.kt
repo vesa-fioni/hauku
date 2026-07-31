@@ -65,6 +65,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Sallii Chrome DevTools -etäselauksen (chrome://inspect tietokoneen
+        // Chromessa) - väliaikainen debug-apu, poistetaan ennen julkaisua.
+        WebView.setWebContentsDebuggingEnabled(true)
+
         setContent {
             HaukuTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
