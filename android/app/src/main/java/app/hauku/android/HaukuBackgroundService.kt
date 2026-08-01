@@ -221,6 +221,23 @@ class HaukuBackgroundService : Service() {
                     request.deny()
                 }
             }
+
+            override fun onConsoleMessage(
+                consoleMessage: android.webkit.ConsoleMessage?
+            ): Boolean {
+                // Sama debug-lokitus kuin näkyvässä WebView'ssä (ks.
+                // valmistusohjeen kohta 17.3) - puuttui headlessistä tähän
+                // asti. Tarpeen audio-PoC:n (kohta 18.2) diagnosointiin.
+                if (BuildConfig.DEBUG) {
+                    Log.d(
+                        "HaukuHeadlessConsole",
+                        "${consoleMessage?.message()} " +
+                            "(${consoleMessage?.sourceId()}:" +
+                            "${consoleMessage?.lineNumber()})"
+                    )
+                }
+                return true
+            }
         }
 
         webView.loadUrl("https://hauku.app")
