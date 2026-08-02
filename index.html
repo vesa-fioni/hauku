@@ -292,7 +292,13 @@
   <div id="onboarding"></div>
 
   <!-- Teaser: näytetään vain kun ei URL-parametrejä (ryhmä) eikä aiemmin
-       tallennettua laitekonfiguraatiota - ks. shared.js boot()/showTeaser() -->
+       tallennettua laitekonfiguraatiota - ks. shared.js boot()/showTeaser().
+       Ei näytetä myöskään headless-ajotilassa (ks. shared.js kohta
+       "Ajotila", getRunMode()) - elementti pysyy tässä DOM:issa piilotettuna
+       myös headless-instanssissa, koska sama index.html palvelee kaikkia
+       kolmea ajotilaa (ks. hauku-android-kaare-valmistusohje.md kohta
+       13.3 - kevyempi erillinen headless.html jätetty tietoisesti tekemättä
+       tässä vaiheessa, ylläpidon yksinkertaisuus painoi enemmän). -->
   <div id="teaser">
     <img class="teaser-wordmark" src="hauku-wordmark.png?v=3" alt="Hauku - hauku.app">
     <p class="teaser-text">
@@ -339,6 +345,6 @@
   <!-- Haukkuhälytys vaihe 2 (v47): YAMNet-vahvistus RMS-laukaisulle, ks.
        hauku-haukkuhalytys-valmistusohje.md kohta 7 -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js" crossorigin="anonymous"></script>
-  <script src="shared.js?v=76"></script>
+  <script src="shared.js?v=77"></script>
 </body>
 </html>

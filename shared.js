@@ -25,6 +25,43 @@ const MAX_CONSECUTIVE_ACCURACY_REJECTS = 3;
 // pitkin siirtymä todellisuudessa tapahtui.
 const MAX_GAP_MS = 20 * 60 * 1000; // 20 min
 
+// ---- Ajotila (Android-kääre, ks. hauku-android-kaare-valmistusohje.md
+// kohta 13.1) ----
+//
+// Kolme ajotilaa saman koodin sisällä:
+//   "browser"         - tavallinen selainkäyttö (oletus, täysin ennallaan)
+//   "wrapper-visible" - Android-wrapperin näkyvä UI (kartta+popupit+
+//                       asetukset kuten nyt), mutta EI kirjoita omaa
+//                       sijaintia/hälytystä koira-roolissa - headless
+//                       hoitaa sen (ks. kohta 6, valittu yksinkertaisempi
+//                       malli: "headless kirjoittaa aina koira-tilassa").
+//   "headless"        - Android-wrapperin taustainstanssi: ei karttaa/
+//                       DOM:ia aktiivisena, kirjoittaa Firestoreen
+//                       täsmälleen samalla logiikalla kuin selain
+//                       normaalisti. Kohta 18.3: natiivi EI syötä GPS-/
+//                       äänidataa erikseen minkään bridgen kautta - tämän
+//                       tiedoston oma watchPosition/getUserMedia hoitaa
+//                       molemmat itsenäisesti myös tässä tilassa, PoC 1-3
+//                       vahvistamalla tavalla.
+//
+// Natiivi asettaa window.__HAUKU_MODE__:n ennen tämän tiedoston suoritusta
+// (esim. evaluateJavascript document-start-vaiheessa). Varasuunnitelma,
+// jos ajoitus ei ehdi: sama tieto luetaan myös URL:n "mode"-parametrista
+// (esim. .../index.html?mode=headless) - kumpi tahansa reitti tuottaa
+// saman lopputuloksen. Tavallisessa selainkäytössä kumpaakaan ei ole,
+// jolloin palautuu aina "browser".
+function getRunMode() {
+  if (window.__HAUKU_MODE__ === "headless" || window.__HAUKU_MODE__ === "wrapper-visible") {
+    return window.__HAUKU_MODE__;
+  }
+  const urlMode = new URLSearchParams(window.location.search).get("mode");
+  if (urlMode === "headless" || urlMode === "wrapper-visible") {
+    window.__HAUKU_MODE__ = urlMode; // cachetaan, ettei URL:ia tarvitse lukea uudelleen joka kutsulla
+    return urlMode;
+  }
+  return "browser";
+}
+
 // ---- Config: lataus, tallennus, URL-oletukset ----
 
 function loadConfig() {
@@ -1456,6 +1493,12 @@ function setPauseButtonLabel(sending) {
 }
 
 function togglePauseResume() {
+  // Varmistus (nappi on normaalisti piilotettu tässä yhdistelmässä, ks.
+  // startPackTracker) - kirjoitusvastuu on headless-instanssilla, ei tämän
+  // funktion pidä koskaan käynnistää paikallista watchPositionia täällä.
+  if (getRunMode() === "wrapper-visible" && currentCfg && currentCfg.role === "dog") {
+    return;
+  }
   if (isSending) {
     if (watchId !== null) navigator.geolocation.clearWatch(watchId);
     if (autoStopTimerId !== null) { clearTimeout(autoStopTimerId); autoStopTimerId = null; }
@@ -1515,9 +1558,15 @@ async function stopPackTracker() {
   followedMembers.clear();
   pendingMeasureFrom = null;
 
-  Object.values(markers).forEach(m => map.removeLayer(m));
+  // map on undefined jos initMap()-kutsua ei ole koskaan tehty (headless-
+  // tila, ks. startPackTracker) - stopPackTracker ajetaan silti aina
+  // ensimmäisenä askeleena startPackTrackerissa, joten tämä suojaus
+  // tarvitaan myös aivan ensimmäisellä headless-käynnistyskerralla.
+  if (map) {
+    Object.values(markers).forEach(m => map.removeLayer(m));
+    Object.values(trails).forEach(t => map.removeLayer(t));
+  }
   markers = {};
-  Object.values(trails).forEach(t => map.removeLayer(t));
   trails = {};
   firstFix = true;
 
@@ -1607,16 +1656,36 @@ function promptForSecondFactor(groupLabel) {
 // mukaan lukien) on kunnossa. Eriytetty omaksi funktioksi, jotta sitä
 // voidaan kutsua myös myöhemmin - ks. retrySecondFactor alla - eikä vain
 // suoraan sisäkkäisenä ensimmäisellä kirjautumiskerralla.
-function beginNormalOperation(db, auth, cfg) {
-  startListeningToGroup(db, cfg);
+function beginNormalOperation(db, auth, cfg, mode) {
+  mode = mode || getRunMode();
+
+  // Ks. hauku-android-kaare-valmistusohje.md kohta 6: "wrapper-visible" +
+  // koira-rooli -yhdistelmässä kirjoitusvastuu on aina headless-
+  // instanssilla, jottei sama uid kirjoita kahdesta WebView-instanssista
+  // yhtä aikaa. Muissa yhdistelmissä (myös "wrapper-visible" ihminen-
+  // roolissa, jolle ei ole omaa headless-vastinetta, ks. kohta 16.1)
+  // kirjoitetaan täysin ennallaan.
+  const isVisibleDogWrapper = mode === "wrapper-visible" && cfg.role === "dog";
+
+  // Headless-instanssilla ei ole karttaa/DOM:ia, joten jäsenten
+  // kuunteluakaan (markerit, jäljet, popupit) ei ole tarpeen käynnistää -
+  // se on puhtaasti "wrapper-visible"/"browser"-tilojen näyttöpuolen asia.
+  if (mode !== "headless") {
+    startListeningToGroup(db, cfg);
+  }
+
+  if (isVisibleDogWrapper) {
+    setStatus("Sijainti ja kuuntelu hoidetaan taustapalvelun kautta");
+    return;
+  }
 
   if (isManuallyPaused()) {
     isSending = false;
-    setStatus("Lähetys pysäytetty");
-    setPauseButtonLabel(false);
+    if (mode !== "headless") setStatus("Lähetys pysäytetty");
+    if (mode !== "headless") setPauseButtonLabel(false);
   } else {
     startSendingLocation(db, auth, cfg);
-    setPauseButtonLabel(true);
+    if (mode !== "headless") setPauseButtonLabel(true);
   }
 
   // Jatketaan äänenkuuntelua automaattisesti jos se oli päällä ennen
@@ -1655,14 +1724,35 @@ function setRetryableSecondFactorStatus(db, auth, cfg) {
 async function startPackTracker(cfg) {
   await stopPackTracker();
 
-  document.getElementById("app").style.display = "flex";
-  initMap(cfg);
-  setTopbar(cfg.role, cfg.groupName || cfg.groupCode);
+  const mode = getRunMode();
+  // Kirjoitusvastuun jako (ks. hauku-android-kaare-valmistusohje.md kohta
+  // 6): "wrapper-visible" + koira-rooli -yhdistelmässä headless-instanssi
+  // kirjoittaa aina sijainnin/hälytyksen, näkyvä wrapper on tässä
+  // yhdistelmässä puhdas lukija/näyttö. Muissa yhdistelmissä (tavallinen
+  // selain, tai "wrapper-visible" ihminen-roolissa, jolle ei ole omaa
+  // headless-vastinetta - ks. kohta 16.1) kirjoitetaan täysin ennallaan.
+  const isVisibleDogWrapper = mode === "wrapper-visible" && cfg.role === "dog";
 
-  // Haukkuhälytyksen kytkin näkyy vain koiramoodissa (oma erillinen kytkin,
-  // ei automaattisesti päällä pelkän roolin perusteella).
-  const listenBtn = document.getElementById("listenBtn");
-  if (listenBtn) listenBtn.style.display = cfg.role === "dog" ? "inline-block" : "none";
+  if (mode !== "headless") {
+    document.getElementById("app").style.display = "flex";
+    initMap(cfg);
+    setTopbar(cfg.role, cfg.groupName || cfg.groupCode);
+
+    // Pysäytä/Jatka- ja Kuuntele ääntä -napit piilotetaan kokonaan tässä
+    // yhdistelmässä sen sijaan että näytettäisiin toimimattomana - napit
+    // ohjaisivat vain TÄMÄN instanssin paikallista watchPosition/
+    // getUserMedia-tilaa, joka ei tässä yhdistelmässä edes käynnisty (ks.
+    // beginNormalOperation alla), ja päivityskanava headless-instanssille
+    // ei ole vielä toteutettu (avoin kysymys, ks. valmistusohjeen kohta
+    // 4.6/11.4). Parempi piilottaa kuin näyttää nappi joka ei tee mitään.
+    const pauseBtn = document.getElementById("pauseBtn");
+    if (pauseBtn) pauseBtn.style.display = isVisibleDogWrapper ? "none" : "inline-block";
+
+    const listenBtn = document.getElementById("listenBtn");
+    if (listenBtn) {
+      listenBtn.style.display = (cfg.role === "dog" && !isVisibleDogWrapper) ? "inline-block" : "none";
+    }
+  }
 
   const { auth, db } = HaukuData.initFirebase(cfg);
 
@@ -1670,12 +1760,12 @@ async function startPackTracker(cfg) {
   currentDb = db;
   currentCfg = cfg;
 
-  setStatus("Kirjaudutaan sisään...");
+  if (mode !== "headless") setStatus("Kirjaudutaan sisään...");
 
   initBatteryManager();
 
   HaukuData.signInAnonymously(auth).then(async () => {
-    setStatus("Yhdistetty ryhmään: " + cfg.groupCode);
+    if (mode !== "headless") setStatus("Yhdistetty ryhmään: " + cfg.groupCode);
 
     // Kirjoitetaan kansilehti VAIN jos tällä laitteella on pin (ks.
     // HaukuData.writeGroupDoc - ei koskaan muuten, race condition -riski).
@@ -1687,6 +1777,17 @@ async function startPackTracker(cfg) {
     const { requiresSecondFactor } = await HaukuData.readGroupDoc(db, cfg);
 
     if (requiresSecondFactor && !cfg.pin) {
+      if (mode === "headless") {
+        // Headless-instanssi ei koskaan saa yrittää interaktiivista PIN-
+        // vuota itse - sillä ei ole tapaa näyttää dialogia (ks.
+        // valmistusohjeen kohta 14.2). Fail-closed: ei kirjoiteta mitään,
+        // odotetaan hiljaa että näkyvä wrapper hoitaa PIN-vuon ja
+        // tallentaa cfg.pin:in jaettuun localStorageen, jonka jälkeen
+        // seuraava foreground servicen käynnistämä headless-instanssi
+        // näkee sen (ks. kohta 13.2.5, sama origin/localStorage).
+        console.warn("Hauku (headless): ryhmä vaatii lisäsuojan linkin, cfg.pin puuttuu vielä - ei käynnistetä.");
+        return;
+      }
       setStatus("Tämä ryhmä vaatii lisäsuojan linkin.");
       const pin = await promptForSecondFactor(cfg.groupName || cfg.groupCode);
       if (!pin) {
@@ -1702,9 +1803,13 @@ async function startPackTracker(cfg) {
       saveConfig(cfg);  // tallennetaan heti, ettei kysytä uudelleen samalla laitteella
     }
 
-    beginNormalOperation(db, auth, cfg);
+    beginNormalOperation(db, auth, cfg, mode);
   }).catch(err => {
-    setStatus("Kirjautumisvirhe: " + err.message);
+    if (mode !== "headless") {
+      setStatus("Kirjautumisvirhe: " + err.message);
+    } else {
+      console.error("Hauku (headless): kirjautumisvirhe:", err);
+    }
   });
 }
 
@@ -3002,6 +3107,11 @@ function stopSoundDetection(persistPreference = true) {
 }
 
 function toggleListening() {
+  // Sama varmistus kuin togglePauseResume:ssa - kuuntelun kirjoitusvastuu
+  // on headless-instanssilla tässä yhdistelmässä (ks. beginNormalOperation).
+  if (getRunMode() === "wrapper-visible" && currentCfg && currentCfg.role === "dog") {
+    return;
+  }
   if (isListening) {
     stopSoundDetection();
   } else {
@@ -3022,7 +3132,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v76";
+const APP_VERSION = "v77";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -3155,13 +3265,21 @@ function showTeaser() {
 }
 
 function boot() {
+  const mode = getRunMode();
+
   const versionEl = document.getElementById("appVersion");
   if (versionEl) versionEl.textContent = APP_VERSION;
 
   const urlCfg = getUrlConfig();
   const existingRaw = loadConfig();
 
-  if (shouldShowTeaser(existingRaw, urlCfg)) {
+  // Teaser-etusivu on puhtaasti "kukaan ei ole vielä liittynyt ryhmään"
+  // -tilanteen näyttöpuolen ratkaisu - headless-instanssilla ei ole ketään
+  // katsomassa sitä, joten sitä ei näytetä eikä boot() palaa täältä
+  // ennenaikaisesti headless-tilassa vaikka konfiguraatio puuttuisi vielä
+  // (ks. alempi hasFirebase/hasGroup/... tarkistus, joka hoitaa headlessin
+  // fail-closed-tapauksen).
+  if (mode !== "headless" && shouldShowTeaser(existingRaw, urlCfg)) {
     showTeaser();
     return;
   }
@@ -3170,7 +3288,19 @@ function boot() {
   // dialogi confirm()-kutsun sijaan, ks. keskustelu 25.7.2026) - loppuosa
   // boot()-logiikasta on siirretty tämän .then()-kutsun sisään, koska se ei
   // enää voi olla synkroninen.
-  resolveGroupConflict(existingRaw, urlCfg).then((existing) => {
+  //
+  // Headless-instanssi ei koskaan saa yrittää interaktiivista ryhmän-
+  // vaihtodialogia (ks. valmistusohjeen kohta 14.2, sama fail-closed-
+  // periaate kuin PIN-vuolla) - ohitetaan resolveGroupConflict kokonaan ja
+  // käytetään suoraan tallennettua konfiguraatiota. Käytännössä headlessille
+  // ei myöskään koskaan välitetä group-URL-parametria (ks. kohta 13.2.5),
+  // joten resolveGroupConflict ei tässä tilassa muutenkaan päätyisi
+  // näyttämään dialogia - tämä on silti eksplisiittinen varmistus.
+  const conflictResolution = mode === "headless"
+    ? Promise.resolve(existingRaw)
+    : resolveGroupConflict(existingRaw, urlCfg);
+
+  conflictResolution.then((existing) => {
     const merged = existing ? { ...existing } : {};
     if (!merged.firebase && urlCfg.firebase) merged.firebase = urlCfg.firebase;
     if (!merged.groupCode && urlCfg.groupCode) merged.groupCode = urlCfg.groupCode;
@@ -3195,17 +3325,33 @@ function boot() {
     const hasName = !!merged.name;
     const hasRole = !!merged.role;
 
-    addSettingsButton(() => {
-      showSettingsOverlay((cfg) => startPackTracker(cfg));
-    });
-    addPauseButton();
-    addListenButton();
+    // Asetukset-, Pysäytä/Jatka- ja Kuuntele ääntä -napit ovat kaikki
+    // interaktiivista näkyvän UI:n toimintaa - headless-instanssissa niitä
+    // ei ole tarpeen kytkeä (ei DOM-vuorovaikutusta, ei ketään klikkaamassa).
+    if (mode !== "headless") {
+      addSettingsButton(() => {
+        showSettingsOverlay((cfg) => startPackTracker(cfg));
+      });
+      addPauseButton();
+      addListenButton();
+    }
 
     if (hasFirebase && hasGroup && hasEncKey && hasName && hasRole) {
       saveConfig(merged);
       startPackTracker(merged);
-    } else {
+    } else if (mode !== "headless") {
       showOnboarding(merged, urlCfg, (cfg) => startPackTracker(cfg));
+    } else {
+      // Headless-instanssi ilman täyttä konfiguraatiota: täällä ei ole
+      // ketään täyttämässä onboarding-lomaketta. Fail-closed (sama
+      // periaate kuin PIN-vuolla, ks. valmistusohjeen kohta 14.2) - ei
+      // tehdä mitään. Foreground service käynnistää uuden headless-
+      // instanssin kun näkyvä wrapper on tallentanut täydellisen cfg:n
+      // jaettuun localStorageen (ks. kohta 13.2.5) - avoin kysymys tämän
+      // hetken toteutuksessa on vain se, huomaako JO KÄYNNISSÄ oleva
+      // headless-instanssi muutoksen ilman uudelleenkäynnistystä (ks.
+      // kohta 4.6/11.4, ei vielä ratkaistu).
+      console.warn("Hauku (headless): konfiguraatio ei ole vielä täydellinen, ei käynnistetä.");
     }
   });
 }
