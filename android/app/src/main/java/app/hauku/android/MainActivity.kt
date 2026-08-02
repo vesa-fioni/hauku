@@ -105,57 +105,6 @@ class MainActivity : ComponentActivity() {
                                     val cookieManager = android.webkit.CookieManager.getInstance()
                                     cookieManager.setAcceptCookie(true)
                                     cookieManager.setAcceptThirdPartyCookies(this, true)
-                                    webViewClient = object : WebViewClient() {
-                                        override fun shouldInterceptRequest(
-                                            view: WebView?,
-                                            request: android.webkit.WebResourceRequest?
-                                        ): android.webkit.WebResourceResponse? {
-                                            val url = request?.url?.toString() ?: ""
-                                            // Hauku käyttää vain signInAnonymously():a,
-                                            // joten Firebase Authin OAuth-apuiframe
-                                            // (popup/redirect-kirjautumisia varten)
-                                            // on tarpeeton - estetään sen lataus,
-                                            // jotta epäonnistunut iframe-navigointi
-                                            // ei peitä koko näkyvää WebView'ta
-                                            // (ks. keskustelu 31.7.2026).
-                                            if (url.contains("/__/auth/iframe")) {
-                                                return android.webkit.WebResourceResponse(
-                                                    "text/plain", "utf-8", null
-                                                )
-                                            }
-                                            return super.shouldInterceptRequest(view, request)
-                                        }
-
-                                        override fun onReceivedError(
-                                            view: WebView?,
-                                            request: android.webkit.WebResourceRequest?,
-                                            error: android.webkit.WebResourceError?
-                                        ) {
-                                            if (BuildConfig.DEBUG) {
-                                                android.util.Log.e(
-                                                    "HaukuWebViewError",
-                                                    "URL: ${request?.url} - " +
-                                                        "Virhe: ${error?.description} " +
-                                                        "(koodi ${error?.errorCode})"
-                                                )
-                                            }
-                                        }
-
-                                        override fun onReceivedHttpError(
-                                            view: WebView?,
-                                            request: android.webkit.WebResourceRequest?,
-                                            errorResponse: android.webkit.WebResourceResponse?
-                                        ) {
-                                            if (BuildConfig.DEBUG) {
-                                                android.util.Log.e(
-                                                    "HaukuWebViewError",
-                                                    "URL: ${request?.url} - " +
-                                                        "HTTP-status: ${errorResponse?.statusCode}"
-                                                )
-                                            }
-                                        }
-                                    }
-
                                     // Silta natiivin ja WebView'n omien
                                     // lupamallien välillä (ks. keskustelu
                                     // 31.7.2026, valmistusohjeen kohta 4.5).
@@ -200,6 +149,73 @@ class MainActivity : ComponentActivity() {
                                                 )
                                             }
                                             return true
+                                        }
+                                    }
+
+                                    // Ajotila (ks. hauku-android-kaare-valmistusohje.md
+                                    // kohta 13.1/19.1): tämä on aina NÄKYVÄ WebView,
+                                    // joten tila on "wrapper-visible" - shared.js
+                                    // käyttäytyy koira-roolissa puhtaana lukijana/
+                                    // näyttönä eikä kirjoita sijaintia/hälytystä (se
+                                    // hoituu headless-instanssin kautta, ks.
+                                    // HaukuBackgroundService). Asetetaan
+                                    // evaluateJavascriptilla HETI sivun latauksen
+                                    // alkaessa (onPageStarted), koska loadUrl():n
+                                    // JÄLKEEN asetettu arvo saattaisi hävitä sivun
+                                    // uudelleennavigoinnissa - onPageStarted ajaa
+                                    // jokaisella navigoinnilla, myös uudelleenlatauksilla.
+                                    webViewClient = object : WebViewClient() {
+                                        override fun onPageStarted(
+                                            view: WebView?,
+                                            url: String?,
+                                            favicon: android.graphics.Bitmap?
+                                        ) {
+                                            view?.evaluateJavascript(
+                                                "window.__HAUKU_MODE__ = 'wrapper-visible';",
+                                                null
+                                            )
+                                        }
+
+                                        override fun shouldInterceptRequest(
+                                            view: WebView?,
+                                            request: android.webkit.WebResourceRequest?
+                                        ): android.webkit.WebResourceResponse? {
+                                            val url = request?.url?.toString() ?: ""
+                                            if (url.contains("/__/auth/iframe")) {
+                                                return android.webkit.WebResourceResponse(
+                                                    "text/plain", "utf-8", null
+                                                )
+                                            }
+                                            return super.shouldInterceptRequest(view, request)
+                                        }
+
+                                        override fun onReceivedError(
+                                            view: WebView?,
+                                            request: android.webkit.WebResourceRequest?,
+                                            error: android.webkit.WebResourceError?
+                                        ) {
+                                            if (BuildConfig.DEBUG) {
+                                                android.util.Log.e(
+                                                    "HaukuWebViewError",
+                                                    "URL: ${request?.url} - " +
+                                                        "Virhe: ${error?.description} " +
+                                                        "(koodi ${error?.errorCode})"
+                                                )
+                                            }
+                                        }
+
+                                        override fun onReceivedHttpError(
+                                            view: WebView?,
+                                            request: android.webkit.WebResourceRequest?,
+                                            errorResponse: android.webkit.WebResourceResponse?
+                                        ) {
+                                            if (BuildConfig.DEBUG) {
+                                                android.util.Log.e(
+                                                    "HaukuWebViewError",
+                                                    "URL: ${request?.url} - " +
+                                                        "HTTP-status: ${errorResponse?.statusCode}"
+                                                )
+                                            }
                                         }
                                     }
 

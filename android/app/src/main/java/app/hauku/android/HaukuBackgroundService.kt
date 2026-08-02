@@ -43,13 +43,26 @@ class HaukuBackgroundService : Service() {
         // PoC 1 -väli (headless WebView -ping)
         private const val PING_INTERVAL_MS = 30_000L
 
-        // PoC 2 -asetukset (GPS + mikrofoni)
+        // PoC 2 -asetukset (GPS + mikrofoni) - EI enää oletusarkkitehtuuri,
+        // ks. valmistusohjeen kohta 18.3. Koodi säilytetty kommentoituna
+        // dokumentaationa, ei poistettu.
         private const val LOCATION_INTERVAL_MS = 10_000L // sama kuin shared.js:n kynnys
         private const val AUDIO_SAMPLE_RATE = 16_000
         private const val AUDIO_LOG_INTERVAL_MS = 2_000L
+
+        // Headless-instanssin lataama URL. Kohta 18.3 (31.7.2026) totesi
+        // ettei natiivi tarvitse syöttää GPS-/äänidataa headlessille -
+        // riittää että sama shared.js ajaa itsenäisesti, joten headless
+        // ladataan täsmälleen samaan tapaan kuin näkyväkin WebView, vain
+        // ?mode=headless-parametrilla varustettuna (ks. hauku-android-
+        // kaare-valmistusohje.md kohta 19.1, getRunMode()-varasuunnitelma
+        // URL-parametrista). Ei group=/groupName=/apiKey=-parametrejä -
+        // headless lukee saman cfg:n jaetusta localStoragesta (ks. kohta
+        // 13.2.5, sama origin), ei URL:sta.
+        private const val HEADLESS_URL = "https://hauku.app/?mode=headless"
     }
 
-    // --- PoC 1: Headless WebView (ei muutoksia edellisestä) ---
+    // --- PoC 1: Headless WebView ---
     private var headlessWebView: WebView? = null
     private val pingHandler = Handler(Looper.getMainLooper())
     private val pingRunnable = object : Runnable {
@@ -62,12 +75,12 @@ class HaukuBackgroundService : Service() {
         }
     }
 
-    // --- PoC 2: GPS ---
+    // --- PoC 2: GPS (ei käytössä, ks. kohta 18.3 - jätetty koodiin
+    // dokumentaationa mahdollista tulevaa hienosäätötarvetta varten) ---
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationCallback: LocationCallback? = null
 
-    // --- PoC 2: Mikrofoni (RMS-taso, sama periaate kuin shared.js:n
-    // AnalyserNode-pohjainen detectSound, mutta natiivina AudioRecordilla) ---
+    // --- PoC 2: Mikrofoni (RMS-taso, ei käytössä, ks. kohta 18.3) ---
     private var audioRecordingThread: Thread? = null
     @Volatile private var isAudioRecording = false
 
@@ -86,8 +99,19 @@ class HaukuBackgroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, buildNotification())
         pingHandler.post(pingRunnable)
-        startLocationUpdates()
-        startAudioRecording()
+        // PÄÄTÖS 31.7.2026 (valmistusohjeen kohta 18.3): headless-
+        // instanssin oma shared.js hoitaa GPS:n ja äänen itsenäisesti,
+        // molemmat PoC:t (GPS + audio) läpäisty myös ruudun ollessa
+        // lukittuna. Natiivi capture jätetään koodiin dokumentaationa
+        // mahdollista tulevaa hienosäätötarvetta varten, ei aktiivinen
+        // oletusarkkitehtuuri.
+        // startLocationUpdates()
+        // VÄLIAIKAISESTI POIS PÄÄLTÄ (audio-PoC, kohta 18.2, 31.7.2026):
+        // epäily että tämä kilpailee mikrofonista JS:n getUserMedia-kutsun
+        // kanssa ("Could not start audio source" -virhe). Palauta kun
+        // testi on tehty, tai jätä pois jos kohta 18.2 päättää natiivin
+        // AudioRecordin olevan tarpeeton.
+        // startAudioRecording()
         return START_STICKY
     }
 
@@ -188,6 +212,32 @@ class HaukuBackgroundService : Service() {
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
         webView.webViewClient = object : WebViewClient() {
+            // Ajotila (ks. hauku-android-kaare-valmistusohje.md kohta
+            // 13.1/19.1): tämä on foreground servicen omistama HEADLESS-
+            // instanssi, ei koskaan kiinnitetty näkymähierarkiaan eikä
+            // koskaan onPause/onResume-kutsuttu (ks. kohta 4.4/10.1).
+            // Asetetaan window.__HAUKU_MODE__ = "headless" jo
+            // onPageStarted-vaiheessa, ennen kuin shared.js:n
+            // DOMContentLoaded-kuuntelija (boot()) ehtii ajaa - shared.js
+            // lukee tämän getRunMode()-funktiolla (kohta 19.1) ja jättää
+            // sen perusteella kartan/UI:n/onboarding-lomakkeen alustamatta,
+            // koska headless-instanssilla ei ole ketään katsomassa niitä.
+            //
+            // Varasuunnitelma jos ajoitus jostain syystä pettäisi: HEADLESS_URL
+            // sisältää myös ?mode=headless-parametrin, jonka getRunMode()
+            // lukee URL:sta jos globaalia lippua ei ehditty asettaa - kaksi
+            // riippumatonta reittiä samaan lopputulokseen.
+            override fun onPageStarted(
+                view: WebView?,
+                url: String?,
+                favicon: android.graphics.Bitmap?
+            ) {
+                view?.evaluateJavascript(
+                    "window.__HAUKU_MODE__ = 'headless';",
+                    null
+                )
+            }
+
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -240,7 +290,14 @@ class HaukuBackgroundService : Service() {
             }
         }
 
-        webView.loadUrl("https://hauku.app")
+        // Ladataan sama shared.js:ää käyttävä sivu, ?mode=headless-
+        // parametrilla varustettuna (ks. yllä HEADLESS_URL ja kohta 19.1).
+        // Aiemmin (PoC 3, kohta 12) tämä osoitettiin suoraan ryhmälinkkiin
+        // testausta varten - tuotannossa tätä ei enää tarvita, koska
+        // shared.js lukee jo tallennetun cfg:n localStoragesta ja käynnistää
+        // itsensä sen perusteella (ks. boot(), kohta 13.2.5) heti kun
+        // näkyvä wrapper-instanssi on kerran tallentanut sen.
+        webView.loadUrl(HEADLESS_URL)
         headlessWebView = webView
     }
 
