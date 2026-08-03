@@ -242,6 +242,19 @@ class MainActivity : ComponentActivity() {
                                 // mukaan - korjaa WebView+Compose-yhdistelmän
                                 // tunnetun kokoheiton (ks. keskustelu 31.7.2026).
                                 webView.requestLayout()
+                            },
+                            onRelease = { webView ->
+                                // Havaittu 3.8.2026 (ks. valmistusohjeen kohta
+                                // 19.3): ilman tätä AndroidView jättää vanhan
+                                // WebView-instanssin roikkumaan muistiin
+                                // "detached"-tilaan aina kun Compose luo tämän
+                                // solmun uudelleen (esim. Activityn
+                                // uudelleenluonti) - chrome://inspect näytti
+                                // useita orpoja instansseja testien aikana.
+                                // Ei vaikuttanut kirjoitusvastuuseen (orvot
+                                // ovat aina "wrapper-visible", eivät koskaan
+                                // headless), mutta on silti muistivuoto.
+                                webView.destroy()
                             }
                         )
                     }
