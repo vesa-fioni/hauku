@@ -2246,18 +2246,28 @@ function startSendingLocation(db, auth, cfg) {
       // salaus epäonnistuu (esim. avain puuttuu), kirjoitus jää tekemättä
       // eikä koskaan pudota selkokieliseen - virhe näytetään käyttäjälle
       // suoraan sen sijaan että se häviäisi hiljaa konsoliin.
+      //
+      // console.error lisätty 3.8.2026 (ks. valmistusohjeen kohta 19.3):
+      // setStatus PÄIVITTÄÄ VAIN näkymättömän DOM-elementin headless-
+      // tilassa, joten virhe oli tähän asti täysin näkymätön siinä -
+      // testauskierros käytti tuntikausia GPS-/PIN-epäilyihin ennen kuin
+      // paljastui ettei kyse ollut niistä lainkaan. console.error näkyy
+      // aina, myös headlessin chrome://inspect-konsolissa.
+      console.error("Hauku: sijainnin kirjoitus epäonnistui:", err);
       setStatus("Sijainnin lähetys epäonnistui: " + err.message);
     });
 
     // Jälki (track) tallennetaan vain koiramoodissa - metsästäjän reittiä ei ole tarpeen seurata.
     if (cfg.role === "dog") {
       HaukuData.writeTrackPoint(db, cfg, uid, { lat, lng, accuracy }).catch(err => {
+        console.error("Hauku: jäljen kirjoitus epäonnistui:", err);
         setStatus("Jäljen tallennus epäonnistui: " + err.message);
       });
     }
 
     setStatus("Lähetetään sijaintia... (" + new Date().toLocaleTimeString() + ")");
   }, (err) => {
+    console.error("Hauku: watchPosition-virhe:", err);
     setStatus("Sijaintivirhe: " + err.message);
   }, {
     enableHighAccuracy: true,
@@ -3138,7 +3148,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v78";
+const APP_VERSION = "v79";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
