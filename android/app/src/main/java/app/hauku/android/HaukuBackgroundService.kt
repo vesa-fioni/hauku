@@ -207,6 +207,15 @@ class HaukuBackgroundService : Service() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
 
+        // Sama välimuistin ohitus kuin MainActivity.kt:n näkyvässä
+        // WebView'ssä (ks. kommentti siellä) - headless jakaa saman
+        // origin/HTTP-välimuistin, joten myös se voi jäädä jumiin vanhaan
+        // index.html/shared.js-versioon kehityksen aikana.
+        if (BuildConfig.DEBUG) {
+            webView.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+            webView.clearCache(true)
+        }
+
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)

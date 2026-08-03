@@ -97,6 +97,20 @@ class MainActivity : ComponentActivity() {
                                     settings.javaScriptEnabled = true
                                     settings.domStorageEnabled = true
 
+                                    // WebView pitää oman HTTP-välimuistinsa,
+                                    // eikä sille ole "kovan päivityksen" -
+                                    // eleitä kuten selaimessa (index.html ei
+                                    // ole itse cache-bustattu, ks. whitepaper
+                                    // kohta 11) - debug-buildissa ohitetaan
+                                    // välimuisti kokonaan, jotta uusin
+                                    // index.html/shared.js latautuu aina
+                                    // kehityksen aikana. Ei tuotantoon (turha
+                                    // verkkoliikenne joka lataukselle).
+                                    if (BuildConfig.DEBUG) {
+                                        settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                                        clearCache(true)
+                                    }
+
                                     // Firebase Authin auth-iframe (eri domain,
                                     // hauku-3b13a.firebaseapp.com) tarvitsee
                                     // kolmannen osapuolen evästepääsyn - WebView
