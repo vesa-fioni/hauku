@@ -1803,6 +1803,12 @@ async function startPackTracker(cfg) {
       saveConfig(cfg);  // tallennetaan heti, ettei kysytä uudelleen samalla laitteella
     }
 
+    // TILAPÄINEN DEBUG (poistettava kun kaksoiskirjoittaja-testi, ks.
+    // valmistusohjeen kohta 19.3, on ajettu loppuun) - vertaillaan
+    // näkyvän ja headless-instanssin uid:tä chrome://inspectin kautta,
+    // jotta nähdään jakavatko ne saman Firebase Auth -istunnon.
+    console.log("Hauku uid:", auth.currentUser.uid, "mode:", mode);
+
     beginNormalOperation(db, auth, cfg, mode);
   }).catch(err => {
     if (mode !== "headless") {
@@ -3132,7 +3138,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v77";
+const APP_VERSION = "v78";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
