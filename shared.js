@@ -1680,6 +1680,13 @@ function beginNormalOperation(db, auth, cfg, mode) {
   }
 
   if (isManuallyPaused()) {
+    // Pysäytetään myös JO KÄYNNISSÄ oleva watchPosition/ajastin, ei vain
+    // uuden käynnistys - tarpeen 4.8.2026 lisätyn storage-synkronoinnin
+    // myötä (ks. attachHeadlessConfigSync), koska tätä funktiota kutsutaan
+    // nyt myös kesken ajon, ei enää vain käynnistyshetkellä.
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    if (autoStopTimerId !== null) { clearTimeout(autoStopTimerId); autoStopTimerId = null; }
+    watchId = null;
     isSending = false;
     if (mode !== "headless") setStatus("Lähetys pysäytetty");
     if (mode !== "headless") setPauseButtonLabel(false);
@@ -1688,10 +1695,16 @@ function beginNormalOperation(db, auth, cfg, mode) {
     if (mode !== "headless") setPauseButtonLabel(true);
   }
 
-  // Jatketaan äänenkuuntelua automaattisesti jos se oli päällä ennen
-  // sivun uudelleenlatausta (sama periaate kuin hauku_paused_v1:lla).
+  // Sovelletaan kuuntelutila symmetrisesti kumpaankin suuntaan - päällä
+  // JA pois päältä - koska tätä funktiota kutsutaan nyt myös kesken ajon
+  // (ks. attachHeadlessConfigSync). stopSoundDetection(false): kolmas
+  // argumentti false = ei kirjoiteta localStorageen uudelleen, koska
+  // tila TULEE juuri localStoragesta, ei tämän instanssin omasta
+  // käyttäjätoiminnosta - persistoisi turhaan takaisin itseensä.
   if (cfg.role === "dog" && isListeningEnabled()) {
     startSoundDetection(db, cfg);
+  } else if (isListening) {
+    stopSoundDetection(false);
   }
 }
 
@@ -3148,7 +3161,7 @@ function addListenButton() {
 
 // Näytetään ylärivillä, jotta näet onko selaimessa uusin versio.
 // Kasvata tätä JA index.html:n shared.js?v=N -numeroa aina kun tiedostoa muutetaan.
-const APP_VERSION = "v79";
+const APP_VERSION = "v80";
 
 // Jos laitteella on jo tallennettu ryhmä JA avattu linkki osoittaa eri ryhmään,
 // kysytään käyttäjältä kumpaa käytetään sen sijaan että linkki hiljaa ohitetaan
@@ -3280,8 +3293,71 @@ function showTeaser() {
   if (teaserVersionEl) teaserVersionEl.textContent = APP_VERSION;
 }
 
+// ---- Headless: reagointi localStorage-muutoksiin ajon aikana (ks.
+// hauku-android-kaare-valmistusohje.md kohta 4.6/11.4/19.3 - aiemmin
+// avoin kysymys, ratkaistu 4.8.2026) ----
+//
+// Selaimen standardi "storage"-tapahtuma laukeaa AUTOMAATTISESTI toisessa
+// samaa originia käyttävässä ikkunassa/WebView-instanssissa kun joku MUU
+// kirjoittaa localStorageen - ei koskaan siinä instanssissa joka itse
+// teki kirjoituksen. Tämä on juuri headless/wrapper-visible-parin
+// tapauksessa täsmälleen oikea mekanismi: kun näkyvä wrapper tallentaa
+// asetukset (saveConfig) tai pysäytys-/kuuntelutilan, headless saa
+// tapahtuman ILMAN pollausta tai natiivipuolen väliintuloa - molemmat
+// instanssit jakavat saman origin-tallennustilan (todennettu 3.8.2026
+// testauksessa: sama Firebase Auth -uid molemmissa).
+//
+// Löytyi tarpeelliseksi käytännön testissä 3.8.2026: käyttäjä muutti
+// autoStopMinutes-arvon näkyvästä wrapperista taustapalvelun ollessa
+// jo käynnissä - headless jatkoi vanhalla arvolla, koska sillä ei ollut
+// mitään tapaa huomata muutosta. Automaattipysäytyksen 15 min oletus
+// laukesi siis headlessissä täysin dokumentoidun (mutta ei-toivotun)
+// käytöksen mukaisesti.
+function attachHeadlessConfigSync() {
+  window.addEventListener("storage", (e) => {
+    if (e.key !== CONFIG_KEY && e.key !== PAUSE_KEY && e.key !== LISTEN_KEY) return;
+
+    const stored = loadConfig();
+    if (!stored) return;
+
+    if (!currentDb || !currentAuth) {
+      // Headless ei ole vielä käynnistynyt (esim. onboarding-lomake oli
+      // kesken boot()-hetkellä, ks. kohta 14.2/19.1) - jos konfiguraatio
+      // on NYT täydellinen, käynnistetään ensimmäistä kertaa sen sijaan
+      // että jäätäisiin odottamaan foreground servicen uudelleenkäynnistystä.
+      const hasFirebase = !!(stored.firebase && stored.firebase.apiKey && stored.firebase.projectId);
+      const hasGroup = !!stored.groupCode;
+      const hasEncKey = !!stored.encKey;
+      const hasName = !!stored.name;
+      const hasRole = !!stored.role;
+      if (hasFirebase && hasGroup && hasEncKey && hasName && hasRole) {
+        console.log("Hauku (headless): konfiguraatio täydentyi jälkikäteen, käynnistetään.");
+        startPackTracker(stored);
+      }
+      return;
+    }
+
+    // Headless on jo käynnissä - päivitetään currentCfg tuoreilla arvoilla
+    // (esim. autoStopMinutes, encKey, pin) ja sovelletaan pysäytys-/
+    // kuuntelutila uudelleen. beginNormalOperation kutsuu
+    // startSendingLocation/startSoundDetection uudelleen turvallisesti -
+    // molemmat siivoavat/tarkistavat oman aiemman tilansa itse (watchId/
+    // autoStopTimerId nollataan startSendingLocationin alussa;
+    // startSoundDetection palaa välittömästi jos isListening on jo tosi),
+    // niin ettei tästä synny kaksoiskäynnistystä tai vuotavaa watchia.
+    currentCfg = stored;
+    console.log("Hauku (headless): localStorage muuttui (" + e.key + "), sovelletaan uudelleen.");
+    beginNormalOperation(currentDb, currentAuth, currentCfg, "headless");
+  });
+}
+
 function boot() {
   const mode = getRunMode();
+
+  // Kytketään storage-kuuntelija HETI, ennen minkään konfiguraatio-
+  // tarkistuksen tulosta - kattaa myös tapauksen jossa cfg täydentyy
+  // vasta myöhemmin (ks. attachHeadlessConfigSync yllä).
+  if (mode === "headless") attachHeadlessConfigSync();
 
   const versionEl = document.getElementById("appVersion");
   if (versionEl) versionEl.textContent = APP_VERSION;
