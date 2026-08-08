@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioFormat
@@ -60,19 +61,80 @@ class HaukuBackgroundService : Service() {
         // headless lukee saman cfg:n jaetusta localStoragesta (ks. kohta
         // 13.2.5, sama origin), ei URL:sta.
         private const val HEADLESS_URL = "https://hauku.app/?mode=headless"
+
+        // Ks. valmistusohjeen kohta 9.2: BootCompletedReceiver lukee
+        // tämän SharedPreferences-arvon päättäessään käynnistääkö
+        // palvelun uudelleen laitteen käynnistyksen jälkeen. Tarkoituksella
+        // natiivi tila, EI shared.js:n localStorage (hauku_paused_v1
+        // kertoisi vain "oliko sijainti pysäytetty", eri asia kuin
+        // "oliko taustapalvelu käynnissä").
+        const val PREFS_NAME = "hauku_service_state"
+        const val PREF_TRACKING_ACTIVE = "tracking_active"
+
+        // Ks. valmistusohjeen kohta 9.3: montako peräkkäistä pingiä saa
+        // jäädä vastaamatta ennen kuin headless-instanssi tulkitaan
+        // jumiin jääneeksi ja korvataan uudella. 3 * PING_INTERVAL_MS
+        // (30s) = 90s ei-vastaamista ennen uudelleenluontia - ei
+        // validoitu käytännössä, ensimmäinen arvaus.
+        private const val MAX_CONSECUTIVE_MISSED_PINGS = 3
     }
 
     // --- PoC 1: Headless WebView ---
     private var headlessWebView: WebView? = null
     private val pingHandler = Handler(Looper.getMainLooper())
+
+    // Terveystarkistuksen tila (ks. valmistusohjeen kohta 9.3). Ei
+    // erillistä ajastinta/timeoutia evaluateJavascript-kutsulle itselleen
+    // (WebView API ei tarjoa sellaista) - sen sijaan verrataan AINA seuraavan
+    // pingin alussa, ehtikö EDELLISEN pingin callback laueta välissä.
+    private var pingAwaitingResponse = false
+    private var consecutiveMissedPings = 0
+
     private val pingRunnable = object : Runnable {
         override fun run() {
             val timestamp = System.currentTimeMillis()
+
+            if (pingAwaitingResponse) {
+                // Edellinen ping ei koskaan saanut callback-vastausta -
+                // WebView on todennäköisesti jumissa (muistipaine tms,
+                // ks. valmistusohjeen kohta 9/9.3).
+                consecutiveMissedPings++
+                Log.w(
+                    "HaukuHeadlessPoC",
+                    "Edellinen ping ei vastannut " +
+                        "($consecutiveMissedPings/$MAX_CONSECUTIVE_MISSED_PINGS)"
+                )
+            }
+
+            if (consecutiveMissedPings >= MAX_CONSECUTIVE_MISSED_PINGS) {
+                Log.e(
+                    "HaukuHeadlessPoC",
+                    "Headless WebView ei vastannut $consecutiveMissedPings kertaa " +
+                        "peräkkäin - luodaan uusi instanssi."
+                )
+                recreateHeadlessWebView()
+                consecutiveMissedPings = 0
+                pingAwaitingResponse = false
+            }
+
+            pingAwaitingResponse = true
             headlessWebView?.evaluateJavascript("document.title") { result ->
+                pingAwaitingResponse = false
+                consecutiveMissedPings = 0
                 Log.d("HaukuHeadlessPoC", "Ping klo $timestamp - sivun otsikko: $result")
             }
+
             pingHandler.postDelayed(this, PING_INTERVAL_MS)
         }
+    }
+
+    // Ks. valmistusohjeen kohta 9.3. Tuhoaa jumiin jääneen (oletetun)
+    // headless-instanssin ja luo tilalle tuoreen - samalla logiikalla
+    // kuin onCreate/setupHeadlessWebView, ei erillistä koodipolkua.
+    private fun recreateHeadlessWebView() {
+        headlessWebView?.destroy()
+        headlessWebView = null
+        setupHeadlessWebView()
     }
 
     // --- PoC 2: GPS (ei käytössä, ks. kohta 18.3 - jätetty koodiin
@@ -98,6 +160,20 @@ class HaukuBackgroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, buildNotification())
+
+        // Ks. valmistusohjeen kohta 9.2: BootCompletedReceiver lukee tämän
+        // arvon päättääkseen käynnistetäänkö palvelu automaattisesti
+        // laitteen uudelleenkäynnistyksen jälkeen. HUOM: tälle ei ole
+        // vielä vastaavaa "false"-kirjoitusta mistään käyttäjän omasta
+        // pysäytystoiminnosta, koska sovelluksessa ei toistaiseksi ole
+        // erillistä "Pysäytä tausta-seuranta" -nappia natiivipuolella -
+        // vain onDestroy() nollaa tämän (ks. alla), joka ei laukea Force
+        // Stopista. Tunnettu, tarkoituksellisesti rajattu puute tässä
+        // vaiheessa - ei vielä täysi elinkaarihallinta.
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean(PREF_TRACKING_ACTIVE, true)
+            .apply()
+
         pingHandler.post(pingRunnable)
         // PÄÄTÖS 31.7.2026 (valmistusohjeen kohta 18.3): headless-
         // instanssin oma shared.js hoitaa GPS:n ja äänen itsenäisesti,
@@ -311,6 +387,9 @@ class HaukuBackgroundService : Service() {
     }
 
     override fun onDestroy() {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean(PREF_TRACKING_ACTIVE, false)
+            .apply()
         pingHandler.removeCallbacks(pingRunnable)
         headlessWebView?.destroy()
         headlessWebView = null

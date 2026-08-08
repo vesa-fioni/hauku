@@ -1,10 +1,14 @@
 package app.hauku.android
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -41,6 +45,22 @@ class MainActivity : ComponentActivity() {
     // (Android ei salli tätä samassa pyynnössä ACCESS_FINE_LOCATIONin kanssa)
     private val backgroundLocationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // Käyttäjä voi kieltää tämänkin luvan - jatketaan siitä huolimatta
+        // akkuoptimointipyyntöön (ks. valmistusohjeen kohta 9.1), koska
+        // tausta-sijainti puuttuisi silloin jo, mutta muu lupavuo ei saa
+        // jäädä siihen kiinni.
+        requestBatteryOptimizationExemptionIfNeeded()
+    }
+
+    // Vaihe 3: akkuoptimointivapautus (ks. valmistusohjeen kohta 9.1) -
+    // järjestelmän oma dialogi, ei tarvitse itse navigoida Asetuksiin.
+    // Tuloksesta ei voi luottavaisesti päätellä hyväksyikö käyttäjä
+    // pyynnön (käyttäjä voi myös peruuttaa dialogin) - tarkistetaan
+    // todellinen tila erikseen isIgnoringBatteryOptimizations()-kutsulla
+    // ennen pyynnön näyttämistä, ei jälkikäteen tuloksesta.
+    private val batteryOptimizationLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
     ) { _ ->
         startTrackingService()
     }
@@ -278,8 +298,24 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         } else {
-            startTrackingService()
+            requestBatteryOptimizationExemptionIfNeeded()
         }
+    }
+
+    // Ks. valmistusohjeen kohta 9.1. HUOM Google Play -käytäntö: tämän
+    // intentin käyttö vaatii erillisen "Käyttötapaus"-perustelun Play
+    // Consolessa julkaisun yhteydessä (ks. kohta 15) - ei automaattinen,
+    // ei saa unohtua ennen julkaisua.
+    private fun requestBatteryOptimizationExemptionIfNeeded() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (powerManager.isIgnoringBatteryOptimizations(packageName)) {
+            startTrackingService()
+            return
+        }
+        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:$packageName")
+        }
+        batteryOptimizationLauncher.launch(intent)
     }
 
     private fun startTrackingService() {
